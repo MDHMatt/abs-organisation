@@ -26,13 +26,13 @@ services:
 
     volumes:
       # Source — unorganised library to scan
-      - *source:/source
+      - /mnt/user/Media/Music/Audiobooks2:/source
 
       # Destination — main Audiobookshelf library
-      - *dest:/dest
+      - /mnt/user/Media/Music/Audiobooks:/dest
 
       # Persistent log output — survives container removal
-      - *logs:/logs
+      - /mnt/user/appdata/absorg/logs:/logs
 
       # Duplicates quarantine folder — review before deleting
       - /mnt/user/appdata/absorg/dupes:/dupes
