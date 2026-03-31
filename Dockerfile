@@ -8,38 +8,37 @@
 #   docker build -t absorg .
 #
 # RUN (dry run — safe, nothing moves):
-#   docker run --rm -v /mnt/user/audiobooks:/audiobooks absorg
+#   docker run --rm \
+#     -v /mnt/user/Audiobooks2:/source \
+#     -v /mnt/user/Audiobooks:/dest \
+#     absorg
 #
 # RUN (apply):
-#   docker run --rm -v /mnt/user/audiobooks:/audiobooks absorg --move
-#
-# RUN (separate source and destination):
 #   docker run --rm \
-#     -v /mnt/user/audiobooks_unsorted:/source \
-#     -v /mnt/user/audiobooks:/dest \
-#     absorg --source /source --dest /dest --move
+#     -v /mnt/user/Audiobooks2:/source \
+#     -v /mnt/user/Audiobooks:/dest \
+#     -v /mnt/user/appdata/absorg/logs:/logs \
+#     -v /mnt/user/appdata/absorg/dupes:/dupes \
+#     absorg --move
 #
-# LOGS:
-#   Mount a host directory to /logs to persist the log file:
-#   docker run --rm \
-#     -v /mnt/user/audiobooks:/audiobooks \
-#     -v /mnt/user/appdata/absorg:/logs \
-#     absorg --log /logs/absorg.log --move
+# Or use docker-compose (recommended for Unraid):
+#   docker-compose run --rm absorg          # dry run
+#   docker-compose run --rm absorg --move   # apply
 # =============================================================================
 
 FROM alpine:3.19
 
 # Install all runtime dependencies in a single layer to keep the image small.
-#   bash     — the script uses bash-specific features (declare -A, <<<, etc.)
-#   ffmpeg   — provides both ffmpeg (cover extraction) and ffprobe (metadata)
+#   bash      — the script requires bash 4+ (declare -A, <<<, ${var,,})
+#   ffmpeg    — provides both ffmpeg (cover extraction) and ffprobe (metadata)
 #   coreutils — provides GNU stat (-c%s) and md5sum (used by fingerprint())
-#   curl     — available for convenience / future use
 #   findutils — ensures find(1) supports -print0 consistently
+#   grep      — used in usage() and metadata parsing
+#   sed       — used in usage() to strip comment prefix from header
 RUN apk add --no-cache \
     bash \
     ffmpeg \
     coreutils \
-    curl \
     findutils \
     grep \
     sed
@@ -48,12 +47,11 @@ RUN apk add --no-cache \
 COPY absorg.sh /usr/local/bin/absorg.sh
 RUN chmod +x /usr/local/bin/absorg.sh
 
-# Default volume mount points matching ABS Docker conventions.
-# Override at runtime with --source / --dest flags.
-VOLUME ["/audiobooks"]
+# Declare expected volume mount points
+VOLUME ["/source", "/dest", "/logs", "/dupes"]
 
 # Run the script with bash explicitly (not sh — the script requires bash 4+)
 ENTRYPOINT ["bash", "/usr/local/bin/absorg.sh"]
 
-# Default to dry run with standard paths — safe out of the box
-CMD ["--source", "/audiobooks", "--dest", "/audiobooks"]
+# Default to dry run — safe out of the box. Append --move to apply.
+CMD ["--source", "/source", "--dest", "/dest", "--dupes", "/dupes", "--log", "/logs/absorg.log"]
