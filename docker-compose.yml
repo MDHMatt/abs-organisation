@@ -12,8 +12,9 @@
 # Reusable volume paths — edit these to match your Unraid share paths.
 # x- prefix marks them as a Compose extension (ignored by the engine itself).
 x-audiobook-paths:
-  audiobooks: &audiobooks /mnt/user/audiobooks
-  logs:       &logs       /mnt/user/appdata/absorg/logs
+  source: &source /mnt/user/Audiobooks2
+  dest:   &dest   /mnt/user/Audiobooks
+  logs:   &logs   /mnt/user/appdata/absorg/logs
 
 services:
   absorg:
@@ -24,10 +25,11 @@ services:
     container_name: absorg
 
     volumes:
-      # Main library — mounted as both source and dest for in-place reorganisation.
-      # If your unsorted files live elsewhere, add a second volume and update
-      # the command's --source flag accordingly.
-      - *audiobooks:/audiobooks
+      # Source — unorganised library to scan
+      - *source:/source
+
+      # Destination — main Audiobookshelf library
+      - *dest:/dest
 
       # Persistent log output — survives container removal
       - *logs:/logs
@@ -35,12 +37,12 @@ services:
       # Duplicates quarantine folder — review before deleting
       - /mnt/user/appdata/absorg/dupes:/dupes
 
-    # Default command — dry run, in-place. Append --move to apply.
+    # Default command — dry run. Append --move to apply.
     # Override individual flags by passing them after the service name:
     #   docker-compose run --rm absorg --move
     command: >
-      --source /audiobooks
-      --dest   /audiobooks
+      --source /source
+      --dest   /dest
       --dupes  /dupes
       --log    /logs/absorg.log
 
