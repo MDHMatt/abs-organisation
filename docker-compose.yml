@@ -1,0 +1,48 @@
+# =============================================================================
+# absorg docker-compose
+# =============================================================================
+# Adjust the volume paths under x-audiobook-paths to match your Unraid shares.
+#
+# USAGE:
+#   docker-compose run --rm absorg              # dry run
+#   docker-compose run --rm absorg --move       # apply
+#   docker-compose run --rm absorg --help       # show all options
+# =============================================================================
+
+# Reusable volume paths — edit these to match your Unraid share paths.
+# x- prefix marks them as a Compose extension (ignored by the engine itself).
+x-audiobook-paths:
+  audiobooks: &audiobooks /mnt/user/audiobooks
+  logs:       &logs       /mnt/user/appdata/absorg/logs
+
+services:
+  absorg:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: absorg:latest
+    container_name: absorg
+
+    volumes:
+      # Main library — mounted as both source and dest for in-place reorganisation.
+      # If your unsorted files live elsewhere, add a second volume and update
+      # the command's --source flag accordingly.
+      - *audiobooks:/audiobooks
+
+      # Persistent log output — survives container removal
+      - *logs:/logs
+
+      # Duplicates quarantine folder — review before deleting
+      - /mnt/user/appdata/absorg/dupes:/dupes
+
+    # Default command — dry run, in-place. Append --move to apply.
+    # Override individual flags by passing them after the service name:
+    #   docker-compose run --rm absorg --move
+    command: >
+      --source /audiobooks
+      --dest   /audiobooks
+      --dupes  /dupes
+      --log    /logs/absorg.log
+
+    # Never restart automatically — this is a one-shot tool, not a daemon
+    restart: "no"
