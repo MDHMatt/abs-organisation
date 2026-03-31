@@ -12,8 +12,8 @@
 # Reusable volume paths — edit these to match your Unraid share paths.
 # x- prefix marks them as a Compose extension (ignored by the engine itself).
 x-audiobook-paths:
-  source: &source /mnt/user/Audiobooks2
-  dest:   &dest   /mnt/user/Audiobooks
+  source: &source /mnt/user/Media/Music/Audiobooks2
+  dest:   &dest   /mnt/user/Media/Music/Audiobooks
   logs:   &logs   /mnt/user/appdata/absorg/logs
 
 services:
