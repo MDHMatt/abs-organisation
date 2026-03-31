@@ -12,9 +12,9 @@
 # Reusable volume paths — edit these to match your Unraid share paths.
 # x- prefix marks them as a Compose extension (ignored by the engine itself).
 x-audiobook-paths:
-  source: /mnt/user/Audiobooks2
-  dest:   /mnt/user/Audiobooks
-  logs:   /mnt/user/appdata/absorg/logs
+  source: &source /mnt/user/Media/Music/Audiobooks2
+  dest:   &dest   /mnt/user/Media/Music/Audiobooks
+  logs:   &logs   /mnt/user/appdata/absorg/logs
 
 services:
   absorg:
@@ -26,10 +26,10 @@ services:
 
     volumes:
       # Source — unorganised library to scan
-      - /mnt/user/Audiobooks2:/source
+      - /mnt/user/Media/Music/Audiobooks2:/source
 
       # Destination — main Audiobookshelf library
-      - /mnt/user/Audiobooks:/dest
+      - /mnt/user/Media/Music/Audiobooks:/dest
 
       # Persistent log output — survives container removal
       - /mnt/user/appdata/absorg/logs:/logs
