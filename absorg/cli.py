@@ -1,0 +1,284 @@
+"""Command-line interface and main orchestration for absorg."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+from dataclasses import dataclass
+
+from absorg.constants import AUDIO_EXTENSIONS
+from absorg.cover import extract_cover
+from absorg.dedup import DedupAction, DedupTracker, quarantine
+from absorg.inference import infer_from_filename, infer_from_path
+from absorg.logger import AbsorgLogger
+from absorg.metadata import resolve_metadata
+from absorg.pathbuilder import build_dest, sanitise
+
+
+@dataclass
+class Counters:
+    """Runtime statistics for the organise run."""
+
+    moved: int = 0
+    skipped: int = 0
+    failed: int = 0
+    no_meta: int = 0  # only incremented on live moves
+    cover: int = 0
+    dupe: int = 0
+    conflict: int = 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        prog="absorg",
+        description="Organise audiobook files for Audiobookshelf.",
+    )
+    parser.add_argument(
+        "--move",
+        dest="dry_run",
+        action="store_false",
+        help="Actually move files (default is dry-run).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help=argparse.SUPPRESS,  # undocumented but accepted
+    )
+    parser.set_defaults(dry_run=True)
+
+    parser.add_argument("--source", default="/audiobooks_unsorted",
+                        help="Source directory to scan recursively (default: /audiobooks_unsorted).")
+    parser.add_argument("--dest", default="/audiobooks",
+                        help="Destination library root (default: /audiobooks).")
+    parser.add_argument("--dupes", default="./audiobook_dupes",
+                        help="Quarantine directory for duplicates (default: ./audiobook_dupes).")
+    parser.add_argument("--log", default="./abs_organise.log",
+                        help="Log file path (default: ./abs_organise.log).")
+    parser.add_argument("--no-cover", dest="no_cover", action="store_true",
+                        help="Skip cover art extraction.")
+
+    return parser.parse_args(argv)
+
+
+def _discover_audio_files(source_dir: str) -> list[str]:
+    """Recursively find all audio files under *source_dir*, sorted."""
+    found: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(source_dir):
+        for name in filenames:
+            ext = os.path.splitext(name)[1].lstrip(".").lower()
+            if ext in AUDIO_EXTENSIONS:
+                found.append(os.path.join(dirpath, name))
+    found.sort()
+    return found
+
+
+def _print_header(args: argparse.Namespace, log: AbsorgLogger) -> None:
+    """Print the configuration banner at the start of a run."""
+    log.log(f"  Source      : {args.source}")
+    log.log(f"  Destination : {args.dest}")
+    log.log(f"  Duplicates  : {args.dupes}")
+    log.log(f"  Log         : {args.log}")
+    log.log(f"  Cover art   : {'yes' if not args.no_cover else 'no'}")
+    if args.dry_run:
+        log.logy("  Mode        : DRY RUN — nothing will be moved (add --move to apply)")
+    else:
+        log.logg("  Mode        : LIVE — files will be moved")
+    log.log()
+
+
+def _log_file_metadata(
+    filepath: str,
+    meta: object,
+    dest_file: str,
+    no_meta: bool,
+    log: AbsorgLogger,
+) -> None:
+    """Log per-file metadata details."""
+    log.logc(f"  FILE     : {filepath}")
+    log.log(f"  Author   : {sanitise(meta.author) if meta.author else '?'}")
+    log.log(f"  Book     : {sanitise(meta.book) if meta.book else '?'}")
+
+    if meta.series:
+        series_info = meta.series
+        if meta.series_index:
+            series_info += f" #{meta.series_index}"
+        log.log(f"  Series   : {series_info}")
+    if meta.title:
+        log.log(f"  Chapter  : {meta.title}")
+    if meta.track:
+        track_info = meta.track
+        if meta.disc:
+            track_info += f"  Disc: {meta.disc}"
+        log.log(f"  Track    : {track_info}")
+    if meta.year:
+        log.log(f"  Year     : {meta.year}")
+    if meta.narrator:
+        log.log(f"  Narrator : {meta.narrator}")
+    if meta.subtitle:
+        log.log(f"  Subtitle : {meta.subtitle}")
+    if meta.genre:
+        log.log(f"  Genre    : {meta.genre}")
+    if no_meta:
+        log.logy("  WARNING  : No embedded tags — inferred from path/filename")
+    log.log(f"  --> {dest_file}")
+
+
+def _print_summary(
+    counters: Counters,
+    dry_run: bool,
+    dupes_dir: str,
+    log: AbsorgLogger,
+) -> None:
+    """Print the run summary."""
+    log.log()
+    if dry_run:
+        log.log(log.bold("DRY RUN complete"))
+        log.log(f"  Would move    : {counters.moved} files")
+        log.log(f"  Skipped       : {counters.skipped} (already in place)")
+        log.log(f"  Duplicates    : {counters.dupe} (would quarantine to {dupes_dir})")
+        log.log(f"  Conflicts     : {counters.conflict} (would rename with suffix)")
+        log.logy("  Run with --move to apply.")
+    else:
+        log.log(log.bold("Complete"))
+        log.log(f"  Moved         : {counters.moved} files")
+        log.log(f"  Skipped       : {counters.skipped}")
+        log.log(f"  Covers        : {counters.cover} extracted")
+        log.log(f"  Duplicates    : {counters.dupe} quarantined")
+        log.log(f"  Conflicts     : {counters.conflict} renamed")
+        log.log(f"  Failed        : {counters.failed}")
+        if counters.no_meta > 0:
+            log.logy(f"  WARNING: {counters.no_meta} files had no metadata — inferred from path/filename")
+        if counters.dupe > 0:
+            log.logy(f"  Review duplicates in {dupes_dir}")
+
+
+def _process_file(
+    filepath: str,
+    args: argparse.Namespace,
+    tracker: DedupTracker,
+    counters: Counters,
+    log: AbsorgLogger,
+) -> None:
+    """Process a single audio file: resolve metadata, dedup, move/skip."""
+    # Resolve metadata and infer fallbacks
+    meta = resolve_metadata(filepath)
+    ip = infer_from_path(filepath, args.source)
+    ifn = infer_from_filename(os.path.basename(filepath))
+
+    # Build destination
+    dest = build_dest(filepath, meta, ip, ifn, args.dest)
+
+    # Already-in-place check
+    if os.path.normpath(os.path.abspath(filepath)) == os.path.normpath(os.path.abspath(dest.dest_file)):
+        log.logd(f"  SKIP (already in place): {os.path.basename(filepath)}")
+        counters.skipped += 1
+        return
+
+    # Log metadata
+    _log_file_metadata(filepath, meta, dest.dest_file, dest.no_meta, log)
+
+    # Dedup check
+    dedup_result = tracker.check(filepath, dest.dest_file)
+
+    if dedup_result.action == DedupAction.QUARANTINE:
+        quarantine(filepath, args.dupes, args.source, args.dry_run, "DUPLICATE", log)
+        counters.dupe += 1
+        log.log()
+        return
+
+    if dedup_result.action == DedupAction.SKIP:
+        log.logd("  EXISTING DUPLICATE: already at destination (fingerprints match)")
+        counters.dupe += 1
+        counters.skipped += 1
+        log.log()
+        return
+
+    # PROCEED — possibly with a renamed destination
+    dest_file = dedup_result.dest_file
+    dest_dir = os.path.dirname(dest_file)
+
+    if dedup_result.dest_file != dest.dest_file:
+        counters.conflict += 1
+        log.logy(f"  CONFLICT: renaming to {dest_file}")
+
+    # Register in seen_dests BEFORE the dry-run check
+    tracker.register(dest_file, filepath)
+
+    if args.dry_run:
+        log.log("  [DRY RUN — would move]")
+        counters.moved += 1
+        log.log()
+        return
+
+    # Live move
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.move(filepath, dest_file)
+        log.logg("  MOVED")
+        counters.moved += 1
+        if dest.no_meta:
+            counters.no_meta += 1
+        # Cover extraction — only on live moves
+        if not args.no_cover:
+            if extract_cover(dest_file, dest_dir, log):
+                counters.cover += 1
+    except OSError as exc:
+        log.logr(f"  FAILED: {exc}")
+        counters.failed += 1
+
+    log.log()
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Entry point for the absorg CLI."""
+    args = parse_args(argv)
+
+    log = AbsorgLogger(args.log)
+
+    try:
+        _print_header(args, log)
+
+        # Validate source
+        if not os.path.isdir(args.source):
+            log.logr(f"ERROR: source not found: {args.source}")
+            sys.exit(1)
+
+        # Discover files
+        files = _discover_audio_files(args.source)
+        total = len(files)
+        log.log(f"Found {log.bold(total)} audio file(s)")
+
+        if total == 0:
+            log.log()
+            return
+
+        # Process
+        tracker = DedupTracker()
+        counters = Counters()
+
+        for n, filepath in enumerate(files, 1):
+            log.log()
+            log.log(f"{log.bold(f'[{n}/{total}]')}")
+            try:
+                _process_file(filepath, args, tracker, counters, log)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                try:
+                    log.logr(f"  ERROR processing {filepath}: {exc}")
+                except Exception:
+                    log.logr(f"  ERROR processing file: {type(exc).__name__}: {exc}")
+                counters.failed += 1
+                log.log()
+
+        _print_summary(counters, args.dry_run, args.dupes, log)
+
+    except KeyboardInterrupt:
+        log.log()
+        log.logy("Interrupted.")
+    finally:
+        log.close()
