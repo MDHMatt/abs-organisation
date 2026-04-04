@@ -5,6 +5,38 @@ AUDIO_EXTENSIONS = frozenset({
     "aac", "wav", "wma", "mp4", "aiff", "ape",
 })
 
+# Format preference for book-level dedup (higher = preferred).
+FORMAT_PREFERENCE: dict[str, int] = {
+    "m4b": 4,
+    "m4a": 3,
+    "mp4": 3,
+    "flac": 2,
+    "opus": 2,
+    "ogg": 1,
+    "mp3": 1,
+    "aac": 1,
+    "wma": 0,
+    "wav": 0,
+    "aiff": 0,
+    "ape": 0,
+    "m4p": 3,
+}
+
+# Characters that don't decompose via NFKD but need transliteration for normalisation.
+TRANSLITERATE_MAP: dict[int, str] = {
+    ord("ø"): "o", ord("Ø"): "O",
+    ord("æ"): "ae", ord("Æ"): "AE",
+    ord("ð"): "d", ord("Ð"): "D",
+    ord("þ"): "th", ord("Þ"): "TH",
+    ord("ł"): "l", ord("Ł"): "L",
+    ord("đ"): "d", ord("Đ"): "D",
+    ord("ß"): "ss",
+}
+
+# Regex patterns for normalisation.
+ROLE_QUALIFIERS_RE = r"\s*[-\u2013\u2014]\s*(?:introductions?|narrator|translator|foreword|adaptation|editor)s?\b.*"
+AUDIBLE_ID_RE = r"\s*\[[A-Z0-9]{10,}\]"
+
 UNKNOWN_AUTHOR = "_Unknown Author"
 UNKNOWN_BOOK = "_Unknown Book"
 

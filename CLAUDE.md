@@ -52,6 +52,8 @@ docker-compose run --rm absorg --move       # apply
 | `--dupes DIR` | `./audiobook_dupes` | Where to quarantine duplicate files |
 | `--log FILE` | `./abs_organise.log` | Log file path (truncated each run) |
 | `--no-cover` | off | Skip cover art extraction |
+| `--book-dedup` | off | Book-level dedup: prefer M4B, prefer newer recordings |
+| `--show-quality` | off | Log audio quality info (bitrate, codec, duration) per file |
 
 ## Project Structure
 
@@ -61,21 +63,27 @@ absorg/
   __main__.py          # python -m absorg entry point
   cli.py               # Arg parsing, main() orchestration, summary
   metadata.py          # mutagen tag extraction, resolve_metadata()
+  audioinfo.py         # Audio stream info (bitrate, codec, duration) via mutagen
+  normalise.py         # Author/book name normalisation for book-level dedup
+  bookdedup.py         # Book-level dedup: inventory, scoring, resolution
   inference.py         # infer_from_path(), infer_from_filename()
   pathbuilder.py       # sanitise(), parse_int(), build_dest()
   dedup.py             # fingerprint(), DedupTracker, quarantine()
   cover.py             # extract_cover() via mutagen
   logger.py            # Colored TTY logging with file tee
-  constants.py         # Extensions, unknown fallbacks, sanitisation map, tag chains
+  constants.py         # Extensions, unknown fallbacks, sanitisation map, tag chains, format prefs
 tests/
   conftest.py          # Shared fixtures (make_mp3, logger)
   test_sanitise.py     # sanitise() and parse_int()
   test_pathbuilder.py  # build_dest() path construction
   test_inference.py    # Path and filename inference
   test_metadata.py     # Tag loading and resolution
+  test_audioinfo.py    # Audio stream info extraction
+  test_normalise.py    # Author/book name normalisation
+  test_bookdedup.py    # Book-level dedup scoring and grouping
   test_dedup.py        # Fingerprinting and collision detection
   test_cover.py        # Cover art extraction
-  test_cli.py          # CLI args, file discovery, end-to-end
+  test_cli.py          # CLI args, file discovery, end-to-end, book-dedup integration
 ```
 
 ## Execution Flow
@@ -85,12 +93,21 @@ main()
   ├─ parse_args()
   ├─ AbsorgLogger(log_path)
   ├─ _discover_audio_files()     → os.walk + extension filter
+  │
+  ├─ if --book-dedup:            → TWO-PASS MODE
+  │    ├─ build_book_inventory() → scan all files, extract metadata + audio info
+  │    │                           group editions by normalised (author, book) key
+  │    ├─ resolve_book_duplicates() → score editions, keep best, quarantine rest
+  │    │                              scoring: M4B > MP3 → newer year → higher bitrate
+  │    └─ _log_book_dedup_decisions()
+  │
   └─ per file:
-       ├─ resolve_metadata()     → mutagen tags → MetadataResult
+       ├─ if in quarantine_dirs → quarantine(BOOK_DEDUP) + skip
+       ├─ resolve_metadata()     → mutagen tags → MetadataResult (cached if book-dedup)
        ├─ infer_from_path()      → directory-name fallback
        ├─ infer_from_filename()  → filename-pattern fallback
        ├─ build_dest()           → computes target path + sanitises
-       ├─ tracker.check()        → fingerprint → dedup decision
+       ├─ tracker.check()        → fingerprint → file-level dedup decision
        ├─ tracker.register()     → BEFORE dry-run guard (critical)
        ├─ move / dry-run         → shutil.move or log only
        └─ extract_cover()        → writes cover.jpg (live moves only)
@@ -104,7 +121,16 @@ Each field is resolved by trying a tag priority chain (defined in `constants.MET
 
 ### Dedup Tracking
 
-`DedupTracker.register()` must be called **before** the dry-run guard so that later files see claimed destinations even when no files are actually moved. This is critical for correct dedup in dry-run mode. The `no_meta` counter is only incremented on live moves.
+**File-level dedup** (`dedup.py`): `DedupTracker.register()` must be called **before** the dry-run guard so that later files see claimed destinations even when no files are actually moved. This is critical for correct dedup in dry-run mode. The `no_meta` counter is only incremented on live moves.
+
+**Book-level dedup** (`bookdedup.py`): Enabled with `--book-dedup`. Uses a two-pass architecture:
+- Pass 1: Inventories all files, extracts metadata + audio info (`AudioInfo`), groups files into editions by directory, then groups editions by normalised `(author, book)` key using `normalise.py`.
+- Pass 2: Scores editions (format preference M4B>MP3, newer year, higher bitrate, longer duration) and quarantines inferior editions before the normal per-file pipeline runs.
+- Book-dedup and file-level dedup are complementary: book-dedup removes inferior editions first, then file-level dedup catches identical content within remaining files.
+
+### Author/Book Name Normalisation
+
+`normalise.py` produces canonical grouping keys for dedup. Author normalisation handles: case folding, accent stripping (NFKD + transliteration), separator variants (`;` → `,`), name ordering (sorted), role qualifier removal (`- introductions`, `- translator`, etc.). Book normalisation handles: case folding, Audible ID stripping, subtitle removal, leading article removal.
 
 ### String Sanitisation
 

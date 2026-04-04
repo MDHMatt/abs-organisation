@@ -8,12 +8,20 @@ import shutil
 import sys
 from dataclasses import dataclass
 
+from absorg.audioinfo import AudioInfo, extract_audio_info, format_quality
+from absorg.bookdedup import (
+    BookDedupDecision,
+    BookEdition,
+    build_book_inventory,
+    resolve_book_duplicates,
+    _edition_summary,
+)
 from absorg.constants import AUDIO_EXTENSIONS
 from absorg.cover import extract_cover
 from absorg.dedup import DedupAction, DedupTracker, quarantine
 from absorg.inference import infer_from_filename, infer_from_path
 from absorg.logger import AbsorgLogger
-from absorg.metadata import resolve_metadata
+from absorg.metadata import MetadataResult, resolve_metadata
 from absorg.pathbuilder import build_dest, sanitise
 
 
@@ -28,6 +36,8 @@ class Counters:
     cover: int = 0
     dupe: int = 0
     conflict: int = 0
+    book_dedup: int = 0          # files quarantined by book-level dedup
+    book_dedup_groups: int = 0   # number of book groups resolved
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -60,6 +70,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Log file path (default: ./abs_organise.log).")
     parser.add_argument("--no-cover", dest="no_cover", action="store_true",
                         help="Skip cover art extraction.")
+    parser.add_argument("--book-dedup", dest="book_dedup", action="store_true",
+                        help="Enable book-level deduplication (prefer M4B, prefer newer).")
+    parser.add_argument("--show-quality", dest="show_quality", action="store_true",
+                        help="Log audio quality info (bitrate, duration, codec) per file.")
 
     return parser.parse_args(argv)
 
@@ -83,6 +97,10 @@ def _print_header(args: argparse.Namespace, log: AbsorgLogger) -> None:
     log.log(f"  Duplicates  : {args.dupes}")
     log.log(f"  Log         : {args.log}")
     log.log(f"  Cover art   : {'yes' if not args.no_cover else 'no'}")
+    if getattr(args, "book_dedup", False):
+        log.log(f"  Book dedup  : yes (prefer M4B, prefer newer)")
+    if getattr(args, "show_quality", False):
+        log.log(f"  Show quality: yes")
     if args.dry_run:
         log.logy("  Mode        : DRY RUN — nothing will be moved (add --move to apply)")
     else:
@@ -96,6 +114,8 @@ def _log_file_metadata(
     dest_file: str,
     no_meta: bool,
     log: AbsorgLogger,
+    *,
+    audio_info: AudioInfo | None = None,
 ) -> None:
     """Log per-file metadata details."""
     log.logc(f"  FILE     : {filepath}")
@@ -122,6 +142,8 @@ def _log_file_metadata(
         log.log(f"  Subtitle : {meta.subtitle}")
     if meta.genre:
         log.log(f"  Genre    : {meta.genre}")
+    if audio_info:
+        log.log(f"  Quality  : {format_quality(audio_info)}")
     if no_meta:
         log.logy("  WARNING  : No embedded tags — inferred from path/filename")
     log.log(f"  --> {dest_file}")
@@ -141,6 +163,8 @@ def _print_summary(
         log.log(f"  Skipped       : {counters.skipped} (already in place)")
         log.log(f"  Duplicates    : {counters.dupe} (would quarantine to {dupes_dir})")
         log.log(f"  Conflicts     : {counters.conflict} (would rename with suffix)")
+        if counters.book_dedup_groups > 0:
+            log.log(f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files (would quarantine)")
         log.logy("  Run with --move to apply.")
     else:
         log.log(log.bold("Complete"))
@@ -150,10 +174,29 @@ def _print_summary(
         log.log(f"  Duplicates    : {counters.dupe} quarantined")
         log.log(f"  Conflicts     : {counters.conflict} renamed")
         log.log(f"  Failed        : {counters.failed}")
+        if counters.book_dedup_groups > 0:
+            log.log(f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files quarantined")
         if counters.no_meta > 0:
             log.logy(f"  WARNING: {counters.no_meta} files had no metadata — inferred from path/filename")
-        if counters.dupe > 0:
+        if counters.dupe > 0 or counters.book_dedup > 0:
             log.logy(f"  Review duplicates in {dupes_dir}")
+
+
+def _log_book_dedup_decisions(
+    decisions: list[BookDedupDecision],
+    log: AbsorgLogger,
+) -> None:
+    """Log book-level dedup decisions before processing starts."""
+    log.log()
+    log.log(log.bold(f"BOOK-LEVEL DEDUP: {len(decisions)} book(s) with multiple editions"))
+    log.log()
+    for d in decisions:
+        log.log(f"  {d.book_display}")
+        log.logg(f"    KEEP:       {d.kept.source_dir} ({_edition_summary(d.kept)})")
+        for q in d.quarantined:
+            log.logm(f"    QUARANTINE: {q.source_dir} ({_edition_summary(q)})")
+        log.log(f"    Reason: {d.reason}")
+        log.log()
 
 
 def _process_file(
@@ -162,10 +205,22 @@ def _process_file(
     tracker: DedupTracker,
     counters: Counters,
     log: AbsorgLogger,
+    *,
+    metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None,
+    show_quality: bool = False,
 ) -> None:
     """Process a single audio file: resolve metadata, dedup, move/skip."""
     # Resolve metadata and infer fallbacks
-    meta = resolve_metadata(filepath)
+    abs_path = os.path.abspath(filepath)
+    audio_info: AudioInfo | None = None
+
+    if metadata_cache and abs_path in metadata_cache:
+        meta, audio_info = metadata_cache[abs_path]
+    else:
+        meta = resolve_metadata(filepath)
+        if show_quality:
+            audio_info = extract_audio_info(filepath)
+
     ip = infer_from_path(filepath, args.source)
     ifn = infer_from_filename(os.path.basename(filepath))
 
@@ -179,7 +234,10 @@ def _process_file(
         return
 
     # Log metadata
-    _log_file_metadata(filepath, meta, dest.dest_file, dest.no_meta, log)
+    _log_file_metadata(
+        filepath, meta, dest.dest_file, dest.no_meta, log,
+        audio_info=audio_info if show_quality else None,
+    )
 
     # Dedup check
     dedup_result = tracker.check(filepath, dest.dest_file)
@@ -260,11 +318,45 @@ def main(argv: list[str] | None = None) -> None:
         tracker = DedupTracker()
         counters = Counters()
 
+        # Book-level dedup: two-pass mode
+        metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None
+        quarantine_dirs: set[str] = set()
+
+        if getattr(args, "book_dedup", False):
+            log.log()
+            log.log(log.bold("Scanning for book-level duplicates..."))
+            groups, metadata_cache = build_book_inventory(files, args.source)
+            if groups:
+                quarantine_dirs, decisions = resolve_book_duplicates(groups)
+                counters.book_dedup_groups = len(decisions)
+                _log_book_dedup_decisions(decisions, log)
+            else:
+                log.log("  No book-level duplicates found.")
+
+        show_quality = getattr(args, "show_quality", False)
+
         for n, filepath in enumerate(files, 1):
             log.log()
             log.log(f"{log.bold(f'[{n}/{total}]')}")
             try:
-                _process_file(filepath, args, tracker, counters, log)
+                # Book-dedup quarantine check
+                if quarantine_dirs:
+                    file_dir = os.path.normpath(os.path.abspath(os.path.dirname(filepath)))
+                    # For root-level files, the "dir" key is the file itself
+                    file_key = os.path.abspath(filepath)
+                    if file_dir in quarantine_dirs or file_key in quarantine_dirs:
+                        log.logc(f"  FILE     : {filepath}")
+                        quarantine(filepath, args.dupes, args.source,
+                                   args.dry_run, "BOOK_DEDUP: inferior edition", log)
+                        counters.book_dedup += 1
+                        log.log()
+                        continue
+
+                _process_file(
+                    filepath, args, tracker, counters, log,
+                    metadata_cache=metadata_cache,
+                    show_quality=show_quality,
+                )
             except KeyboardInterrupt:
                 raise
             except Exception as exc:

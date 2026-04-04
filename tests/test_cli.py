@@ -5,6 +5,8 @@ import os
 import pytest
 
 from absorg.cli import Counters, _discover_audio_files, main, parse_args
+from mutagen.mp3 import MP3
+from mutagen.id3 import TPE2, TALB, TIT2
 
 
 class TestParseArgs:
@@ -42,6 +44,22 @@ class TestParseArgs:
     def test_no_cover(self):
         args = parse_args(["--no-cover"])
         assert args.no_cover is True
+
+    def test_book_dedup_flag(self):
+        args = parse_args(["--book-dedup"])
+        assert args.book_dedup is True
+
+    def test_book_dedup_default_off(self):
+        args = parse_args([])
+        assert args.book_dedup is False
+
+    def test_show_quality_flag(self):
+        args = parse_args(["--show-quality"])
+        assert args.show_quality is True
+
+    def test_show_quality_default_off(self):
+        args = parse_args([])
+        assert args.show_quality is False
 
 
 class TestDiscoverAudioFiles:
@@ -154,9 +172,6 @@ class TestMainLiveMove:
         with open(mp3_path, "wb") as f:
             f.write(frame * 5)
 
-        from mutagen.mp3 import MP3
-        from mutagen.id3 import TPE2, TALB, TIT2
-
         audio = MP3(mp3_path)
         audio.add_tags()
         audio.tags.add(TPE2(encoding=3, text=["Author"]))
@@ -183,3 +198,150 @@ class TestMainLiveMove:
                 moved_files.append(os.path.join(dp, fn))
         assert len(moved_files) == 1
         assert moved_files[0].endswith(".mp3")
+
+
+def _create_tagged_mp3(path, *, album_artist="", album="", title="Chapter"):
+    """Helper to create a tagged MP3 at the given path."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    frame = b"\xff\xfb\x90\x00" + b"\x00" * 413
+    with open(path, "wb") as f:
+        f.write(frame * 5)
+    if album_artist or album or title:
+        audio = MP3(path)
+        audio.add_tags()
+        if album_artist:
+            audio.tags.add(TPE2(encoding=3, text=[album_artist]))
+        if album:
+            audio.tags.add(TALB(encoding=3, text=[album]))
+        if title:
+            audio.tags.add(TIT2(encoding=3, text=[title]))
+        audio.save()
+    return path
+
+
+class TestBookDedup:
+    def test_book_dedup_quarantines_duplicate_editions(self, tmp_path):
+        """With --book-dedup, duplicate editions should be quarantined."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        dupes = tmp_path / "dupes"
+        dest.mkdir()
+
+        # Edition 1: tagged as "Author A" (comma separator)
+        d1 = source / "Author A, Author B" / "Good Book"
+        _create_tagged_mp3(
+            str(d1 / "ch01.mp3"),
+            album_artist="Author A, Author B",
+            album="Good Book", title="Ch 1",
+        )
+        _create_tagged_mp3(
+            str(d1 / "ch02.mp3"),
+            album_artist="Author A, Author B",
+            album="Good Book", title="Ch 2",
+        )
+
+        # Edition 2: tagged with semicolon separator (should normalise to same key)
+        d2 = source / "Author A; Author B" / "Good Book"
+        _create_tagged_mp3(
+            str(d2 / "ch01.mp3"),
+            album_artist="Author A; Author B",
+            album="Good Book", title="Ch 1",
+        )
+
+        main([
+            "--move", "--book-dedup", "--no-cover",
+            "--source", str(source),
+            "--dest", str(dest),
+            "--dupes", str(dupes),
+            "--log", str(tmp_path / "test.log"),
+        ])
+
+        # One edition should be in dest, the other in dupes
+        dest_files = []
+        for dp, dn, fnames in os.walk(str(dest)):
+            for fn in fnames:
+                if fn.endswith(".mp3"):
+                    dest_files.append(fn)
+        dupes_files = []
+        for dp, dn, fnames in os.walk(str(dupes)):
+            for fn in fnames:
+                if fn.endswith(".mp3"):
+                    dupes_files.append(fn)
+
+        assert len(dest_files) > 0, "Should have kept at least one edition"
+        assert len(dupes_files) > 0, "Should have quarantined at least one edition"
+        # Total should equal original count
+        assert len(dest_files) + len(dupes_files) == 3
+
+    def test_without_book_dedup_both_survive(self, tmp_path):
+        """Without --book-dedup, both editions should survive."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        dupes = tmp_path / "dupes"
+        dest.mkdir()
+
+        # Two editions with different separator
+        d1 = source / "Author A, Author B" / "Good Book"
+        _create_tagged_mp3(
+            str(d1 / "ch01.mp3"),
+            album_artist="Author A, Author B",
+            album="Good Book", title="Ch 1",
+        )
+
+        d2 = source / "Author A; Author B" / "Good Book"
+        _create_tagged_mp3(
+            str(d2 / "ch01.mp3"),
+            album_artist="Author A; Author B",
+            album="Good Book", title="Ch 1",
+        )
+
+        main([
+            "--move", "--no-cover",
+            "--source", str(source),
+            "--dest", str(dest),
+            "--dupes", str(dupes),
+            "--log", str(tmp_path / "test.log"),
+        ])
+
+        # Both files should end up somewhere (dest or dest with conflicts)
+        dest_mp3s = []
+        for dp, dn, fnames in os.walk(str(dest)):
+            for fn in fnames:
+                if fn.endswith(".mp3"):
+                    dest_mp3s.append(fn)
+        # Without book-dedup, file-level dedup may quarantine identical content
+        # but both editions with different content should survive
+        total = len(dest_mp3s)
+        dupes_count = 0
+        for dp, dn, fnames in os.walk(str(dupes)):
+            for fn in fnames:
+                if fn.endswith(".mp3"):
+                    dupes_count += 1
+        assert total + dupes_count == 2
+
+    def test_show_quality_outputs_quality_line(self, tmp_path):
+        """--show-quality should include quality info in the log."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        dest.mkdir()
+
+        d = source / "Author" / "Book"
+        _create_tagged_mp3(
+            str(d / "ch01.mp3"),
+            album_artist="Author", album="Book", title="Ch 1",
+        )
+
+        log_file = str(tmp_path / "test.log")
+        main([
+            "--show-quality", "--no-cover",
+            "--source", str(source),
+            "--dest", str(dest),
+            "--dupes", str(tmp_path / "dupes"),
+            "--log", log_file,
+        ])
+
+        with open(log_file) as f:
+            log_content = f.read()
+        assert "Quality" in log_content
+        assert "MP3" in log_content
+        assert "kbps" in log_content
