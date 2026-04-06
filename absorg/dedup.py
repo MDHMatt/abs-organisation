@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
 
@@ -44,8 +45,18 @@ class DedupTracker:
     that already exists from a previous run).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, fingerprint_cache: dict[str, str] | None = None) -> None:
         self.seen_dests: dict[str, str] = {}  # normalised dest → fingerprint
+        self._fp_cache: dict[str, str] = fingerprint_cache or {}
+
+    def _get_fingerprint(self, filepath: str) -> str:
+        """Return fingerprint from cache or compute on demand."""
+        norm = os.path.normpath(os.path.abspath(filepath))
+        if norm in self._fp_cache:
+            return self._fp_cache[norm]
+        fp = fingerprint(filepath)
+        self._fp_cache[norm] = fp
+        return fp
 
     def register(self, dest_file: str, source_file: str) -> None:
         """Record that *source_file* has claimed *dest_file*.
@@ -54,7 +65,7 @@ class DedupTracker:
         see the claimed destination even when no files are actually moved.
         """
         key = os.path.normpath(dest_file)
-        self.seen_dests[key] = fingerprint(source_file)
+        self.seen_dests[key] = self._get_fingerprint(source_file)
 
     def check(self, source_file: str, dest_file: str) -> DedupResult:
         """Determine whether *source_file* can be placed at *dest_file*.
@@ -62,7 +73,7 @@ class DedupTracker:
         Returns a :class:`DedupResult` indicating the action to take.
         """
         norm = os.path.normpath(dest_file)
-        src_fp = fingerprint(source_file)
+        src_fp = self._get_fingerprint(source_file)
 
         # Phase 1: in-run collision
         if norm in self.seen_dests:
@@ -75,7 +86,7 @@ class DedupTracker:
 
         # Phase 2: on-disk collision
         if os.path.exists(dest_file):
-            existing_fp = fingerprint(dest_file)
+            existing_fp = self._get_fingerprint(dest_file)
             if src_fp == existing_fp:
                 return DedupResult(action=DedupAction.SKIP, dest_file=dest_file)
             free = self.find_free_dest(dest_file)
@@ -94,6 +105,30 @@ class DedupTracker:
             if not os.path.exists(candidate) and norm not in self.seen_dests:
                 return candidate
             n += 1
+
+
+def precompute_fingerprints(
+    files: list[str],
+    max_workers: int = 4,
+) -> dict[str, str]:
+    """Pre-compute fingerprints for all *files* in parallel.
+
+    Returns a dict mapping normalised absolute path to fingerprint string.
+    Files that cannot be read are silently skipped (computed on demand later).
+    """
+    cache: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(fingerprint, f): os.path.normpath(os.path.abspath(f))
+            for f in files
+        }
+        for future in as_completed(futures):
+            norm_path = futures[future]
+            try:
+                cache[norm_path] = future.result()
+            except OSError:
+                pass  # will be computed on-demand in check()
+    return cache
 
 
 def quarantine(

@@ -18,7 +18,7 @@ from absorg.bookdedup import (
 )
 from absorg.constants import AUDIO_EXTENSIONS
 from absorg.cover import extract_cover
-from absorg.dedup import DedupAction, DedupTracker, quarantine
+from absorg.dedup import DedupAction, DedupTracker, precompute_fingerprints, quarantine
 from absorg.inference import infer_from_filename, infer_from_path
 from absorg.logger import AbsorgLogger
 from absorg.metadata import MetadataResult, resolve_metadata
@@ -74,6 +74,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Enable book-level deduplication (prefer M4B, prefer newer).")
     parser.add_argument("--show-quality", dest="show_quality", action="store_true",
                         help="Log audio quality info (bitrate, duration, codec) per file.")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="Parallel workers for I/O (0=auto-detect, default: 0).")
 
     return parser.parse_args(argv)
 
@@ -90,7 +92,7 @@ def _discover_audio_files(source_dir: str) -> list[str]:
     return found
 
 
-def _print_header(args: argparse.Namespace, log: AbsorgLogger) -> None:
+def _print_header(args: argparse.Namespace, log: AbsorgLogger, workers: int) -> None:
     """Print the configuration banner at the start of a run."""
     log.log(f"  Source      : {args.source}")
     log.log(f"  Destination : {args.dest}")
@@ -101,6 +103,8 @@ def _print_header(args: argparse.Namespace, log: AbsorgLogger) -> None:
         log.log(f"  Book dedup  : yes (prefer M4B, prefer newer)")
     if getattr(args, "show_quality", False):
         log.log(f"  Show quality: yes")
+    worker_label = "auto-detected" if not args.workers else "user-specified"
+    log.log(f"  Workers     : {workers} ({worker_label})")
     if args.dry_run:
         log.logy("  Mode        : DRY RUN — nothing will be moved (add --move to apply)")
     else:
@@ -298,7 +302,9 @@ def main(argv: list[str] | None = None) -> None:
     log = AbsorgLogger(args.log)
 
     try:
-        _print_header(args, log)
+        workers = args.workers or min(os.cpu_count() or 4, 16)
+
+        _print_header(args, log, workers)
 
         # Validate source
         if not os.path.isdir(args.source):
@@ -314,8 +320,13 @@ def main(argv: list[str] | None = None) -> None:
             log.log()
             return
 
+        # Pre-compute fingerprints in parallel
+        log.log(f"Pre-computing fingerprints ({workers} workers)...")
+        fp_cache = precompute_fingerprints(files, max_workers=workers)
+        log.log(f"  {len(fp_cache)} fingerprints cached")
+
         # Process
-        tracker = DedupTracker()
+        tracker = DedupTracker(fingerprint_cache=fp_cache)
         counters = Counters()
 
         # Book-level dedup: two-pass mode
@@ -324,8 +335,8 @@ def main(argv: list[str] | None = None) -> None:
 
         if getattr(args, "book_dedup", False):
             log.log()
-            log.log(log.bold("Scanning for book-level duplicates..."))
-            groups, metadata_cache = build_book_inventory(files, args.source)
+            log.log(log.bold(f"Scanning for book-level duplicates ({workers} workers)..."))
+            groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
             if groups:
                 quarantine_dirs, decisions = resolve_book_duplicates(groups)
                 counters.book_dedup_groups = len(decisions)

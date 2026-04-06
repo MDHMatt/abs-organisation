@@ -61,6 +61,14 @@ class TestParseArgs:
         args = parse_args([])
         assert args.show_quality is False
 
+    def test_workers_default(self):
+        args = parse_args([])
+        assert args.workers == 0
+
+    def test_workers_custom(self):
+        args = parse_args(["--workers", "8"])
+        assert args.workers == 8
+
 
 class TestDiscoverAudioFiles:
     def test_finds_mp3(self, make_mp3):

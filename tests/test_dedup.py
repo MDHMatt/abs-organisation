@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from absorg.dedup import DedupAction, DedupResult, DedupTracker, fingerprint, quarantine
+from absorg.dedup import DedupAction, DedupResult, DedupTracker, fingerprint, precompute_fingerprints, quarantine
 
 
 class TestFingerprint:
@@ -126,6 +126,70 @@ class TestDedupTracker:
 
         free = tracker.find_free_dest(base)
         assert free == str(tmp_path / "file.3.mp3")
+
+
+class TestPrecomputeFingerprints:
+    def test_basic(self, tmp_path):
+        a = tmp_path / "a.bin"
+        b = tmp_path / "b.bin"
+        a.write_bytes(b"aaa")
+        b.write_bytes(b"bbb")
+        cache = precompute_fingerprints([str(a), str(b)], max_workers=2)
+        assert len(cache) == 2
+        norm_a = os.path.normpath(os.path.abspath(str(a)))
+        norm_b = os.path.normpath(os.path.abspath(str(b)))
+        assert norm_a in cache
+        assert norm_b in cache
+        assert cache[norm_a] == fingerprint(str(a))
+
+    def test_missing_file_skipped(self, tmp_path):
+        existing = tmp_path / "exists.bin"
+        existing.write_bytes(b"data")
+        cache = precompute_fingerprints(
+            [str(existing), str(tmp_path / "nonexistent.bin")],
+            max_workers=2,
+        )
+        assert len(cache) == 1
+
+
+class TestDedupTrackerWithCache:
+    def test_cache_hit(self, tmp_path):
+        """Tracker uses pre-computed fingerprint from cache."""
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"data123")
+        dest = str(tmp_path / "dest" / "file.bin")
+
+        cache = precompute_fingerprints([str(src)], max_workers=1)
+        tracker = DedupTracker(fingerprint_cache=cache)
+        result = tracker.check(str(src), dest)
+        assert result.action == DedupAction.PROCEED
+
+    def test_cache_miss_fallback(self, tmp_path):
+        """Tracker computes fingerprint on demand for uncached files."""
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"data456")
+        dest = str(tmp_path / "dest" / "file.bin")
+
+        # Empty cache — should fall back to live fingerprint
+        tracker = DedupTracker(fingerprint_cache={})
+        result = tracker.check(str(src), dest)
+        assert result.action == DedupAction.PROCEED
+
+    def test_cached_dedup_detects_duplicate(self, tmp_path):
+        """Cached fingerprints still detect duplicates correctly."""
+        a = tmp_path / "a.bin"
+        b = tmp_path / "b.bin"
+        data = b"same content"
+        a.write_bytes(data)
+        b.write_bytes(data)
+
+        cache = precompute_fingerprints([str(a), str(b)], max_workers=2)
+        tracker = DedupTracker(fingerprint_cache=cache)
+        dest = str(tmp_path / "dest" / "file.bin")
+
+        tracker.register(dest, str(a))
+        result = tracker.check(str(b), dest)
+        assert result.action == DedupAction.QUARANTINE
 
 
 class TestQuarantine:

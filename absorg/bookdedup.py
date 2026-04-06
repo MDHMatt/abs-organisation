@@ -15,7 +15,9 @@ Pass 2 (Resolution):
 from __future__ import annotations
 
 import os
+import sys
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from absorg.audioinfo import AudioInfo, extract_audio_info, format_duration, format_quality
@@ -81,9 +83,17 @@ def _edition_summary(edition: BookEdition) -> str:
     return ", ".join(parts)
 
 
+def _extract_file_info(filepath: str) -> tuple[str, MetadataResult, AudioInfo]:
+    """Extract metadata and audio info for a single file (thread-safe)."""
+    meta = resolve_metadata(filepath)
+    ai = extract_audio_info(filepath)
+    return (os.path.abspath(filepath), meta, ai)
+
+
 def build_book_inventory(
     files: list[str],
     source_dir: str,
+    max_workers: int = 4,
 ) -> tuple[dict[tuple[str, str], BookGroup], dict[str, tuple[MetadataResult, AudioInfo]]]:
     """Scan all files, build editions grouped by normalised (author, book) key.
 
@@ -95,7 +105,26 @@ def build_book_inventory(
     source_dir = os.path.normpath(os.path.abspath(source_dir))
     metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] = {}
 
-    # Step 1: Group files by their parent directory.
+    # Phase 1a: Extract metadata + audio info for all files in parallel.
+    total = len(files)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_extract_file_info, f): f for f in files}
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if total >= 100 and (completed % 500 == 0 or completed == total):
+                print(f"\r  Scanned {completed}/{total} files...", end="", flush=True, file=sys.stderr)
+            try:
+                abs_path, meta, ai = future.result()
+            except Exception:
+                filepath = futures[future]
+                abs_path = os.path.abspath(filepath)
+                meta, ai = MetadataResult(), AudioInfo()
+            metadata_cache[abs_path] = (meta, ai)
+    if total >= 100:
+        print(file=sys.stderr)
+
+    # Phase 1b: Group files by their parent directory.
     # Root-level files each get their own unique key.
     dir_files: dict[str, list[str]] = defaultdict(list)
     for filepath in files:
@@ -107,7 +136,7 @@ def build_book_inventory(
         else:
             dir_files[parent].append(abs_path)
 
-    # Step 2: Build editions from directory groups.
+    # Step 2: Build editions from directory groups using cached metadata.
     editions: list[BookEdition] = []
     for dir_path, dir_file_list in dir_files.items():
         edition = BookEdition(source_dir=dir_path, files=dir_file_list)
@@ -119,9 +148,7 @@ def build_book_inventory(
         has_m4b = False
 
         for fpath in dir_file_list:
-            meta = resolve_metadata(fpath)
-            ai = extract_audio_info(fpath)
-            metadata_cache[fpath] = (meta, ai)
+            meta, ai = metadata_cache[fpath]
 
             # Collect edition metadata from the first file with non-empty values
             if not edition.author and meta.author:
