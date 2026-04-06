@@ -109,3 +109,43 @@ class TestNormaliseBook:
 
     def test_preserves_distinct_books(self):
         assert normalise_book("Dune") != normalise_book("Foundation")
+
+    def test_preserves_series_numbers(self):
+        """Different series numbers should normalize to different keys."""
+        assert normalise_book("Alan Partridge - Series 1") != \
+               normalise_book("Alan Partridge - Series 2")
+
+    def test_preserves_book_ranges(self):
+        """Different book ranges should normalize to different keys."""
+        assert normalise_book("Skulduggery Pleasant: Books 1-3") != \
+               normalise_book("Skulduggery Pleasant: Books 4-6")
+        assert normalise_book("Skulduggery Pleasant: Books 4-6") != \
+               normalise_book("Skulduggery Pleasant: Books 7-9")
+
+    def test_preserves_act_numbers(self):
+        """Different acts should normalize to different keys."""
+        assert normalise_book("The Sandman - Act I") != \
+               normalise_book("The Sandman - Act II")
+
+    def test_preserves_part_numbers(self):
+        """Different parts should normalize to different keys."""
+        assert normalise_book("Hitchhiker's Guide - Part 1") != \
+               normalise_book("Hitchhiker's Guide - Part 2")
+
+    def test_preserves_volume_numbers(self):
+        """Different volumes should normalize to different keys."""
+        assert normalise_book("Aurora Saga - Volume 1") != \
+               normalise_book("Aurora Saga - Volume 2")
+
+    def test_base_title_equivalent_with_series_marker(self):
+        """The base title with and without series marker should still normalize the same
+        when the series marker is conceptually the same edition."""
+        # "Alan Partridge Series 1" and "Alan Partridge - Series 1" should be the same
+        assert normalise_book("Alan Partridge Series 1") == \
+               normalise_book("Alan Partridge - Series 1")
+
+    def test_strips_actual_subtitle_before_series(self):
+        """Actual subtitles should still be stripped; series markers preserved."""
+        # A real subtitle before the series info
+        assert normalise_book("Good Omens: The Nice and Accurate Prophecies Series 1") == \
+               normalise_book("Good Omens Series 1")

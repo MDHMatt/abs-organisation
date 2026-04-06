@@ -1,0 +1,31 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install PyInstaller and project dependencies
+COPY pyproject.toml .
+COPY absorg/ absorg/
+RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir pyinstaller mutagen>=1.47
+
+# Build standalone binary
+RUN pyinstaller \
+    --onefile \
+    --name absorg \
+    --hidden-import=mutagen.id3 \
+    --hidden-import=mutagen.mp4 \
+    --hidden-import=mutagen.asf \
+    --hidden-import=mutagen.flac \
+    --hidden-import=mutagen.ogg \
+    --hidden-import=mutagen.oggopus \
+    --hidden-import=mutagen.oggvorbis \
+    --hidden-import=mutagen.aiff \
+    --hidden-import=mutagen.wavpack \
+    --hidden-import=mutagen.apev2 \
+    --hidden-import=mutagen.wave \
+    --hidden-import=mutagen.aac \
+    absorg/__main__.py
+
+# Minimal output stage
+FROM scratch
+COPY --from=builder /build/dist/absorg /absorg
