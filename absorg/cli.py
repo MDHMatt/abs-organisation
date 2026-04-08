@@ -113,7 +113,7 @@ def _print_header(args: argparse.Namespace, log: AbsorgLogger, workers: int) -> 
 
 def _log_file_metadata(
     filepath: str,
-    meta: object,
+    meta: MetadataResult,
     dest_file: str,
     no_meta: bool,
     log: AbsorgLogger,

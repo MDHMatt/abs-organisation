@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Mutagen-based metadata extraction for audiobook files.
 
 Reads audio file tags using mutagen and resolves them into a structured
@@ -11,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, fields
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mutagen
 import mutagen.asf
@@ -19,6 +20,9 @@ import mutagen.id3
 import mutagen.mp4
 
 from absorg.constants import METADATA_TAG_CHAINS
+
+if TYPE_CHECKING:
+    from mutagen._file import FileType
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +80,7 @@ _ASF_KEY_MAP: dict[str, str] = {
 }
 
 
-def _normalise_id3(file: mutagen.FileType) -> dict[str, str]:
+def _normalise_id3(file: FileType) -> dict[str, str]:
     """Normalise ID3 tags (MP3) to a flat lowercase-keyed dict."""
     tags: dict[str, str] = {}
     if file.tags is None:
@@ -106,7 +110,7 @@ def _normalise_id3(file: mutagen.FileType) -> dict[str, str]:
     return tags
 
 
-def _normalise_mp4(file: mutagen.FileType) -> dict[str, str]:
+def _normalise_mp4(file: FileType) -> dict[str, str]:
     """Normalise MP4/M4A/M4B tags to a flat lowercase-keyed dict.
 
     MP4 atoms come in three flavours that all need different handling:
@@ -156,7 +160,7 @@ def _normalise_mp4(file: mutagen.FileType) -> dict[str, str]:
     return tags
 
 
-def _normalise_vorbis(file: mutagen.FileType) -> dict[str, str]:
+def _normalise_vorbis(file: FileType) -> dict[str, str]:
     """Normalise Vorbis comments (FLAC, OGG, Opus) to a flat lowercase-keyed dict."""
     tags: dict[str, str] = {}
     if file.tags is None:
@@ -169,11 +173,14 @@ def _normalise_vorbis(file: mutagen.FileType) -> dict[str, str]:
     return tags
 
 
-def _normalise_asf(file: mutagen.FileType) -> dict[str, str]:
+def _normalise_asf(file: FileType) -> dict[str, str]:
     """Normalise ASF/WMA tags to a flat lowercase-keyed dict."""
     tags: dict[str, str] = {}
     if file.tags is None:
         return tags
+
+    # Type guard: ensure file.tags is narrowed to ASFTag for the type checker.
+    assert isinstance(file.tags, mutagen.asf.ASFTag)
 
     # WMA tag values come back as a list of ASFBaseAttribute objects, where
     # the actual string lives on .value. Older mutagen versions occasionally

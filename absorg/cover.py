@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false
 """Extract embedded cover art from audio files."""
 
 from __future__ import annotations
