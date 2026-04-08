@@ -132,7 +132,17 @@ Each field is resolved by trying a tag priority chain (defined in `constants.MET
 
 ### Author/Book Name Normalisation
 
-`normalise.py` produces canonical grouping keys for dedup. Author normalisation handles: case folding, accent stripping (NFKD + transliteration), separator variants (`;` → `,`), name ordering (sorted), role qualifier removal (`- introductions`, `- translator`, etc.). Book normalisation handles: case folding, Audible ID stripping, subtitle removal, leading article removal.
+`normalise.py` produces canonical grouping keys for dedup. 
+
+**Author normalisation** handles: case folding, accent stripping (NFKD + transliteration), separator variants (`;` → `,`), name ordering (sorted), role qualifier removal (`- introductions`, `- translator`, etc.).
+
+**Book normalisation** handles: case folding, Audible ID stripping, subtitle removal, leading article removal, and **crucially, preserves volume/series markers** (Series, Part, Act, Volume, Book, etc.) that distinguish different works. For example:
+- "Alan Partridge Series 1" and "Alan Partridge Series 2" normalize to different keys
+- "Skulduggery Pleasant Books 1-3" and "Books 4-6" are kept distinct
+- "The Sandman Act I" and "Act II" remain separate
+- Extracting markers from mixed subtitle text: "Good Omens: The Nice and Accurate Prophecies Series 1" → "good omens series 1"
+
+This prevents incorrectly grouping different seasons, trilogies, or volumes as duplicates during book-level dedup.
 
 ### Parallel Processing
 
