@@ -40,6 +40,46 @@ def _normalise_id3(file: Any) -> dict[str, str]:
 
 **Verify:** `python -m ruff check absorg/metadata.py`, then reopen the file in VS Code to confirm the Pylance squiggle is gone, then `python -m pytest tests/test_metadata.py -v`.
 
+### 1b. `absorg/metadata.py` and `absorg/cover.py` — unknown attributes on mutagen frame objects
+
+Same root cause as Issue 1 (mutagen ships without type stubs and the runtime attribute surface is wider than whatever Pylance/pyright can infer), but the symptom is different: pyright flags every `frame.text`, `frame.desc`, `frame.FrameID`, and `apic_frames[0].data` access inside the format-specific helpers with messages like `Cannot access attribute "text" for class "TextFrame" — Attribute "text" is unknown`.
+
+**Affected sites:**
+
+- [absorg/metadata.py:86](absorg/metadata.py#L86) — `frame.FrameID`
+- [absorg/metadata.py:90](absorg/metadata.py#L90) — `frame.desc` (TXXX)
+- [absorg/metadata.py:91](absorg/metadata.py#L91) — `frame.text[0]` (TXXX)
+- [absorg/metadata.py:97](absorg/metadata.py#L97) — `frame.text[0]` (TextFrame)
+- [absorg/metadata.py:103](absorg/metadata.py#L103) — `frame.text` (hasattr guard)
+- [absorg/metadata.py:104](absorg/metadata.py#L104) — `frame.text[0]` (fallback)
+- [absorg/cover.py:57](absorg/cover.py#L57) — `apic_frames[0].data`
+- [absorg/cover.py:67](absorg/cover.py#L67) — `audio.pictures[0].data`
+- [absorg/cover.py:77](absorg/cover.py#L77) — `pic.data`
+
+These all run correctly at runtime — mutagen really does expose those attributes, and the test suite covers every code path. The warnings are a pure type-checker artefact.
+
+**Recommended fix — file-level suppression.** Both files are entirely about mutagen interop, so silencing `reportAttributeAccessIssue` at the file level is proportionate and does not leak into the rest of the codebase:
+
+```python
+# At the very top of absorg/metadata.py and absorg/cover.py, before the module docstring:
+# pyright: reportAttributeAccessIssue=false
+```
+
+**Alternative — per-site `getattr()`.** Cleaner but more invasive. Mirror the pattern already used in [absorg/audioinfo.py:58-63](absorg/audioinfo.py#L58) which already uses `getattr(info, "bitrate", 0) or 0` to access mutagen stream info safely. Example rewrite of [absorg/metadata.py:95-98](absorg/metadata.py#L95):
+
+```python
+if isinstance(frame, mutagen.id3.TextFrame):
+    key = frame_id.lower()
+    text_list = getattr(frame, "text", None)
+    value = str(text_list[0]) if text_list else ""
+    tags[key] = value
+    continue
+```
+
+The file-level suppression is recommended because (a) these helpers are only called internally and (b) the test suite already locks down the runtime contract, so the type-checker warnings add no safety.
+
+**Verify:** `python -m pytest tests/test_metadata.py tests/test_cover.py -v` and reopen both files in VS Code to confirm the Pylance squiggles are gone.
+
 ### 2. `absorg/cli.py:116` — `meta: object` is too wide for its body
 
 **Affected line:** [absorg/cli.py:116](absorg/cli.py#L116) in `_log_file_metadata()`. The parameter is declared `meta: object`, but the body accesses `meta.author`, `meta.book`, `meta.series`, `meta.series_index`, `meta.title`, `meta.track`, `meta.disc`, `meta.year`, `meta.narrator`, `meta.subtitle`, `meta.genre` — none of which are attributes of `object`. Pyright will flag every one of those accesses under strict mode. It currently passes at runtime because Python does not enforce annotations, but the diagnostics are noisy in the IDE.
