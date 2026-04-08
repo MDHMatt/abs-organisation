@@ -4,7 +4,9 @@ When enabled via ``--book-dedup``, this module adds a two-pass architecture:
 
 Pass 1 (Inventory):
     Scan all files, extract metadata + audio info, group files into editions
-    by their source directory, then group editions by normalised
+    by their source directory and per-file normalised ``(author, book)``
+    sub-key (so a "series container" directory produces one edition per
+    book), then group editions across directories by normalised
     ``(author, book)`` key.
 
 Pass 2 (Resolution):
@@ -109,9 +111,7 @@ def build_book_inventory(
     total = len(files)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_extract_file_info, f): f for f in files}
-        completed = 0
-        for future in as_completed(futures):
-            completed += 1
+        for completed, future in enumerate(as_completed(futures), start=1):
             if total >= 100 and (completed % 500 == 0 or completed == total):
                 print(f"\r  Scanned {completed}/{total} files...", end="", flush=True, file=sys.stderr)
             try:
@@ -137,53 +137,68 @@ def build_book_inventory(
             dir_files[parent].append(abs_path)
 
     # Step 2: Build editions from directory groups using cached metadata.
+    # Within each directory, sub-group files by their per-file normalised
+    # (author, book) key so that "series container" directories (holding
+    # multiple distinct books) produce one edition per book rather than being
+    # mis-matched as a single book against standalone copies elsewhere.
     editions: list[BookEdition] = []
     for dir_path, dir_file_list in dir_files.items():
-        edition = BookEdition(source_dir=dir_path, files=dir_file_list)
-
-        total_bitrate = 0
-        total_duration = 0.0
-        total_size = 0
-        ext_counter: Counter[str] = Counter()
-        has_m4b = False
+        sub_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+        sub_first_meta: dict[tuple[str, str], tuple[str, str, str]] = {}
 
         for fpath in dir_file_list:
-            meta, ai = metadata_cache[fpath]
+            meta, _ai = metadata_cache[fpath]
+            sub_key = (
+                normalise_author(meta.author or ""),
+                normalise_book(meta.book or ""),
+            )
+            sub_groups[sub_key].append(fpath)
+            if sub_key not in sub_first_meta:
+                sub_first_meta[sub_key] = (meta.author or "", meta.book or "", meta.year or "")
 
-            # Collect edition metadata from the first file with non-empty values
-            if not edition.author and meta.author:
-                edition.author = meta.author
-            if not edition.book and meta.book:
-                edition.book = meta.book
-            if not edition.year and meta.year:
-                edition.year = meta.year
+        for sub_key, sub_files in sub_groups.items():
+            first_author, first_book, first_year = sub_first_meta[sub_key]
+            edition = BookEdition(
+                source_dir=dir_path,
+                files=sub_files,
+                author=first_author,
+                book=first_book,
+                year=first_year,
+            )
 
-            ext = os.path.splitext(fpath)[1].lstrip(".").lower()
-            ext_counter[ext] += 1
-            if ext == "m4b":
-                has_m4b = True
+            total_bitrate = 0
+            total_duration = 0.0
+            total_size = 0
+            ext_counter: Counter[str] = Counter()
+            has_m4b = False
 
-            total_bitrate += ai.bitrate
-            total_duration += ai.duration
-            total_size += os.path.getsize(fpath) if os.path.exists(fpath) else 0
+            for fpath in sub_files:
+                _meta, ai = metadata_cache[fpath]
+                ext = os.path.splitext(fpath)[1].lstrip(".").lower()
+                ext_counter[ext] += 1
+                if ext == "m4b":
+                    has_m4b = True
+                total_bitrate += ai.bitrate
+                total_duration += ai.duration
+                total_size += os.path.getsize(fpath) if os.path.exists(fpath) else 0
 
-        # Infer author/book from path if tags were empty
-        if dir_file_list:
-            sample = dir_file_list[0]
-            ip = infer_from_path(sample, source_dir)
-            ifn = infer_from_filename(os.path.basename(sample))
-            if not edition.author:
-                edition.author = ip[0] or ifn[0] or ""
-            if not edition.book:
-                edition.book = ip[1] or ifn[1] or ""
+            # Infer author/book from path if tags were empty
+            if not edition.author or not edition.book:
+                sample = sub_files[0]
+                ip = infer_from_path(sample, source_dir)
+                ifn = infer_from_filename(os.path.basename(sample))
+                if not edition.author:
+                    edition.author = ip[0] or ifn[0] or ""
+                if not edition.book:
+                    edition.book = ip[1] or ifn[1] or ""
 
-        edition.format = "m4b" if has_m4b else (ext_counter.most_common(1)[0][0] if ext_counter else "")
-        edition.total_duration = total_duration
-        edition.avg_bitrate = total_bitrate // len(dir_file_list) if dir_file_list else 0
-        edition.file_count = len(dir_file_list)
-        edition.total_size = total_size
+            edition.format = "m4b" if has_m4b else (ext_counter.most_common(1)[0][0] if ext_counter else "")
+            edition.total_duration = total_duration
+            edition.avg_bitrate = total_bitrate // len(sub_files) if sub_files else 0
+            edition.file_count = len(sub_files)
+            edition.total_size = total_size
 
-        editions.append(edition)
+            editions.append(edition)
 
     # Step 3: Group editions by normalised (author, book) key.
     all_groups: dict[tuple[str, str], BookGroup] = defaultdict(lambda: BookGroup(norm_key=("", "")))
@@ -206,10 +221,13 @@ def resolve_book_duplicates(
 
     Returns
     -------
-    quarantine_dirs : set of absolute directory paths whose files should be quarantined
+    quarantine_files : set of normalised absolute file paths to quarantine.
+        Populated from ``loser.files`` and normalised via
+        ``os.path.normpath(os.path.abspath(...))`` so callers can look up files
+        by computing the same key from the iterated source file path.
     decisions : list of BookDedupDecision records for logging
     """
-    quarantine_dirs: set[str] = set()
+    quarantine_files: set[str] = set()
     decisions: list[BookDedupDecision] = []
 
     for _key, group in sorted(groups.items()):
@@ -223,7 +241,8 @@ def resolve_book_duplicates(
         losers = ranked[1:]
 
         for loser in losers:
-            quarantine_dirs.add(loser.source_dir)
+            for fpath in loser.files:
+                quarantine_files.add(os.path.normpath(os.path.abspath(fpath)))
 
         # Build reason string
         reasons: list[str] = []
@@ -250,4 +269,4 @@ def resolve_book_duplicates(
             reason="; ".join(reasons) if reasons else "higher overall score",
         ))
 
-    return quarantine_dirs, decisions
+    return quarantine_files, decisions

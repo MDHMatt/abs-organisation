@@ -113,7 +113,7 @@ main()
   │    └─ _log_book_dedup_decisions()
   │
   └─ per file:
-       ├─ if in quarantine_dirs → quarantine(BOOK_DEDUP) + skip
+       ├─ if in quarantine_files → quarantine(BOOK_DEDUP) + skip
        ├─ resolve_metadata()     → mutagen tags → MetadataResult (cached if book-dedup)
        ├─ infer_from_path()      → directory-name fallback
        ├─ infer_from_filename()  → filename-pattern fallback
@@ -135,8 +135,9 @@ Each field is resolved by trying a tag priority chain (defined in `constants.MET
 **File-level dedup** (`dedup.py`): `DedupTracker.register()` must be called **before** the dry-run guard so that later files see claimed destinations even when no files are actually moved. This is critical for correct dedup in dry-run mode. The `no_meta` counter is only incremented on live moves.
 
 **Book-level dedup** (`bookdedup.py`): Enabled with `--book-dedup`. Uses a two-pass architecture:
-- Pass 1: Inventories all files, extracts metadata + audio info (`AudioInfo`), groups files into editions by directory, then groups editions by normalised `(author, book)` key using `normalise.py`.
-- Pass 2: Scores editions (format preference M4B>MP3, newer year, higher bitrate, longer duration) and quarantines inferior editions before the normal per-file pipeline runs.
+
+- Pass 1: Inventories all files, extracts metadata + audio info (`AudioInfo`), and groups files into editions. Within each source directory, files are sub-grouped by per-file normalised `(author, book)` so that "series container" directories (e.g. a trilogy folder with Book 1 / Book 2 / Book 3) produce one edition per distinct book rather than a single conflated edition that would mis-match a standalone copy of any one book. Editions are then grouped across directories by normalised `(author, book)` key using `normalise.py`.
+- Pass 2: Scores editions (format preference M4B>MP3, newer year, higher bitrate, longer duration) and quarantines inferior editions before the normal per-file pipeline runs. Quarantine is tracked by normalised file path (`quarantine_files: set[str]`), not by directory, because a single directory can hold files belonging to both a kept and a quarantined sub-edition.
 - Book-dedup and file-level dedup are complementary: book-dedup removes inferior editions first, then file-level dedup catches identical content within remaining files.
 
 ### Author/Book Name Normalisation

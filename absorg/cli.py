@@ -284,9 +284,8 @@ def _process_file(
         if dest.no_meta:
             counters.no_meta += 1
         # Cover extraction — only on live moves
-        if not args.no_cover:
-            if extract_cover(dest_file, dest_dir, log):
-                counters.cover += 1
+        if not args.no_cover and extract_cover(dest_file, dest_dir, log):
+            counters.cover += 1
     except OSError as exc:
         log.logr(f"  FAILED: {exc}")
         counters.failed += 1
@@ -330,14 +329,14 @@ def main(argv: list[str] | None = None) -> None:
 
         # Book-level dedup: two-pass mode
         metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None
-        quarantine_dirs: set[str] = set()
+        quarantine_files: set[str] = set()
 
         if getattr(args, "book_dedup", False):
             log.log()
             log.log(log.bold(f"Scanning for book-level duplicates ({workers} workers)..."))
             groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
             if groups:
-                quarantine_dirs, decisions = resolve_book_duplicates(groups)
+                quarantine_files, decisions = resolve_book_duplicates(groups)
                 counters.book_dedup_groups = len(decisions)
                 _log_book_dedup_decisions(decisions, log)
             else:
@@ -350,11 +349,9 @@ def main(argv: list[str] | None = None) -> None:
             log.log(f"{log.bold(f'[{n}/{total}]')}")
             try:
                 # Book-dedup quarantine check
-                if quarantine_dirs:
-                    file_dir = os.path.normpath(os.path.abspath(os.path.dirname(filepath)))
-                    # For root-level files, the "dir" key is the file itself
-                    file_key = os.path.abspath(filepath)
-                    if file_dir in quarantine_dirs or file_key in quarantine_dirs:
+                if quarantine_files:
+                    file_key = os.path.normpath(os.path.abspath(filepath))
+                    if file_key in quarantine_files:
                         log.logc(f"  FILE     : {filepath}")
                         quarantine(filepath, args.dupes, args.source,
                                    args.dry_run, "BOOK_DEDUP: inferior edition", log)

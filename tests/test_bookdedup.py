@@ -44,51 +44,62 @@ class TestScoreEdition:
         assert score_edition(m4b_old) > score_edition(mp3_new)
 
 
+def _norm(path: str) -> str:
+    return os.path.normpath(os.path.abspath(path))
+
+
 class TestResolveBookDuplicates:
     def test_keeps_best_quarantines_rest(self):
-        kept = BookEdition(source_dir="/kept", format="m4b", year="2019",
+        kept_file = _norm("/kept/file.m4b")
+        loser_file = _norm("/loser/file.mp3")
+        kept = BookEdition(source_dir="/kept", files=[kept_file], format="m4b", year="2019",
                            avg_bitrate=128000, total_duration=3600,
                            author="Author", book="Book", file_count=1)
-        loser = BookEdition(source_dir="/loser", format="mp3", year="2014",
+        loser = BookEdition(source_dir="/loser", files=[loser_file], format="mp3", year="2014",
                             avg_bitrate=64000, total_duration=3600,
                             author="Author", book="Book", file_count=10)
         groups = {
             ("author", "book"): BookGroup(norm_key=("author", "book"), editions=[kept, loser]),
         }
-        quarantine_dirs, decisions = resolve_book_duplicates(groups)
-        assert "/loser" in quarantine_dirs
-        assert "/kept" not in quarantine_dirs
+        quarantine_files, decisions = resolve_book_duplicates(groups)
+        assert loser_file in quarantine_files
+        assert kept_file not in quarantine_files
         assert len(decisions) == 1
         assert decisions[0].kept.source_dir == "/kept"
 
     def test_empty_groups(self):
-        quarantine_dirs, decisions = resolve_book_duplicates({})
-        assert quarantine_dirs == set()
+        quarantine_files, decisions = resolve_book_duplicates({})
+        assert quarantine_files == set()
         assert decisions == []
 
     def test_three_editions(self):
-        best = BookEdition(source_dir="/best", format="m4b", year="2020",
+        best_file = _norm("/best/file.m4b")
+        mid_file = _norm("/mid/file.mp3")
+        worst_file = _norm("/worst/file.mp3")
+        best = BookEdition(source_dir="/best", files=[best_file], format="m4b", year="2020",
                            avg_bitrate=128000, total_duration=3600,
                            author="A", book="B", file_count=1)
-        mid = BookEdition(source_dir="/mid", format="mp3", year="2020",
+        mid = BookEdition(source_dir="/mid", files=[mid_file], format="mp3", year="2020",
                           avg_bitrate=128000, total_duration=3600,
                           author="A", book="B", file_count=10)
-        worst = BookEdition(source_dir="/worst", format="mp3", year="2010",
+        worst = BookEdition(source_dir="/worst", files=[worst_file], format="mp3", year="2010",
                             avg_bitrate=64000, total_duration=3600,
                             author="A", book="B", file_count=10)
         groups = {
             ("a", "b"): BookGroup(norm_key=("a", "b"), editions=[worst, best, mid]),
         }
-        quarantine_dirs, decisions = resolve_book_duplicates(groups)
-        assert "/best" not in quarantine_dirs
-        assert "/mid" in quarantine_dirs
-        assert "/worst" in quarantine_dirs
+        quarantine_files, decisions = resolve_book_duplicates(groups)
+        assert best_file not in quarantine_files
+        assert mid_file in quarantine_files
+        assert worst_file in quarantine_files
 
     def test_decision_has_reason(self):
-        kept = BookEdition(source_dir="/a", format="m4b", year="2019",
+        kept_file = _norm("/a/file.m4b")
+        loser_file = _norm("/b/file.mp3")
+        kept = BookEdition(source_dir="/a", files=[kept_file], format="m4b", year="2019",
                            avg_bitrate=128000, total_duration=3600,
                            author="Author", book="Book", file_count=1)
-        loser = BookEdition(source_dir="/b", format="mp3", year="2014",
+        loser = BookEdition(source_dir="/b", files=[loser_file], format="mp3", year="2014",
                             avg_bitrate=64000, total_duration=3600,
                             author="Author", book="Book", file_count=10)
         groups = {
@@ -97,6 +108,24 @@ class TestResolveBookDuplicates:
         _, decisions = resolve_book_duplicates(groups)
         assert "M4B" in decisions[0].reason
         assert "MP3" in decisions[0].reason
+
+    def test_quarantines_all_files_in_loser_edition(self):
+        """A loser edition with multiple files should quarantine every one."""
+        kept_file = _norm("/kept/file.m4b")
+        loser_files = [_norm(f"/loser/ch{i:02d}.mp3") for i in range(1, 4)]
+        kept = BookEdition(source_dir="/kept", files=[kept_file], format="m4b", year="2019",
+                           avg_bitrate=128000, total_duration=3600,
+                           author="Author", book="Book", file_count=1)
+        loser = BookEdition(source_dir="/loser", files=loser_files, format="mp3", year="2014",
+                            avg_bitrate=64000, total_duration=3600,
+                            author="Author", book="Book", file_count=3)
+        groups = {
+            ("author", "book"): BookGroup(norm_key=("author", "book"), editions=[kept, loser]),
+        }
+        quarantine_files, _ = resolve_book_duplicates(groups)
+        for f in loser_files:
+            assert f in quarantine_files
+        assert kept_file not in quarantine_files
 
 
 class TestBuildBookInventory:
@@ -159,6 +188,34 @@ class TestBuildBookInventory:
         groups, cache = build_book_inventory(files, str(source))
 
         assert len(groups) == 0
+
+    def test_multi_book_container_splits_into_sub_editions(self, tmp_path):
+        """A directory holding files with different album tags becomes multiple editions."""
+        source = tmp_path / "source"
+        container = source / "Author" / "Trilogy"
+        container.mkdir(parents=True)
+        helper = _make_mp3_helper(container)
+        helper("book1.mp3", album_artist="Author", album="Book One")
+        helper("book2.mp3", album_artist="Author", album="Book Two")
+        helper("book3.mp3", album_artist="Author", album="Book Three")
+
+        from absorg.cli import _discover_audio_files
+        files = _discover_audio_files(str(source))
+        groups, _cache = build_book_inventory(files, str(source))
+        # Each distinct book appears only once -> no duplicate groups yet.
+        assert len(groups) == 0
+
+        # Add a standalone copy of Book Two; it should group with the container sub-edition.
+        standalone = source / "Author" / "Book Two"
+        standalone.mkdir(parents=True)
+        _make_mp3_helper(standalone)("only.mp3", album_artist="Author", album="Book Two")
+        files = _discover_audio_files(str(source))
+        groups, _cache = build_book_inventory(files, str(source))
+        assert len(groups) == 1
+        g = list(groups.values())[0]
+        assert len(g.editions) == 2
+        for ed in g.editions:
+            assert ed.file_count == 1
 
     def test_cache_populated(self, tmp_path):
         """Metadata cache should have entries for all files."""

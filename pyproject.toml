@@ -1,6 +1,6 @@
 [project]
 name = "absorg"
-version = "2.3.0"
+version = "2.3.1"
 description = "Organise audiobook files for Audiobookshelf"
 requires-python = ">=3.11"
 dependencies = ["mutagen>=1.47"]
