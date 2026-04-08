@@ -1,10 +1,26 @@
-# pyright: reportAttributeAccessIssue=false
+# pyright: reportAttributeAccessIssue=false, reportPrivateImportUsage=false
 """Mutagen-based metadata extraction for audiobook files.
 
 Reads audio file tags using mutagen and resolves them into a structured
 MetadataResult via the priority chains defined in constants.METADATA_TAG_CHAINS.
 Handles format-specific quirks across ID3 (MP3), MP4/M4A/M4B, Vorbis
 (FLAC/OGG/Opus), and ASF (WMA).
+
+The file-level pyright pragma silences two categories of diagnostics
+that stem from mutagen shipping without type stubs:
+
+* ``reportAttributeAccessIssue`` — frame attributes like ``text``,
+  ``desc``, ``FrameID``, and ``data`` are populated dynamically by
+  mutagen's ``_framespec`` mechanism, which pyright cannot see.
+* ``reportPrivateImportUsage`` — mutagen exports many public names
+  (``FileType``, ``TXXX``, ``TextFrame``, ``ASFBaseAttribute``, etc.)
+  via re-export rather than via ``__all__``, so pyright treats them
+  as private imports.
+
+Runtime narrowing of ``file.tags`` is done with :func:`typing.cast`
+rather than ``isinstance`` asserts because pyright infers
+``FileType.tags`` as ``None`` (from the mutagen class-level default
+``tags = None``) so ``isinstance`` would narrow to ``Never``.
 """
 
 from __future__ import annotations
@@ -12,12 +28,13 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import mutagen
 import mutagen.asf
 import mutagen.id3
 import mutagen.mp4
+from mutagen._vorbis import VComment
 
 from absorg.constants import METADATA_TAG_CHAINS
 
@@ -86,8 +103,15 @@ def _normalise_id3(file: FileType) -> dict[str, str]:
     if file.tags is None:
         return tags
 
-    for frame in file.tags.values():
-        frame_id = frame.FrameID if hasattr(frame, "FrameID") else ""
+    # Narrow file.tags from mutagen's abstract Tags base to the concrete
+    # ID3 dict-like view so the type checker sees .values() / .getall().
+    # cast() is required rather than `isinstance` because mutagen declares
+    # FileType.tags with a None default and no annotation, so pyright
+    # narrows it to `None` and any `isinstance` assert would land at Never.
+    id3_tags = cast("mutagen.id3.ID3", file.tags)
+
+    for frame in id3_tags.values():
+        frame_id = getattr(frame, "FrameID", "") or ""
 
         if isinstance(frame, mutagen.id3.TXXX):
             # Custom text frames: store as txxx:{description}
@@ -104,8 +128,9 @@ def _normalise_id3(file: FileType) -> dict[str, str]:
 
         # Numeric frames (track, disc) also derive from TextFrame in mutagen,
         # but just in case a subclass isn't caught above:
-        if hasattr(frame, "text") and frame.text:
-            tags[frame_id.lower()] = str(frame.text[0])
+        text = getattr(frame, "text", None)
+        if text:
+            tags[frame_id.lower()] = str(text[0])
 
     return tags
 
@@ -128,7 +153,10 @@ def _normalise_mp4(file: FileType) -> dict[str, str]:
     if file.tags is None:
         return tags
 
-    for key, value in file.tags.items():
+    # See _normalise_id3 for why cast() is used here instead of isinstance.
+    mp4_tags = cast("mutagen.mp4.MP4Tags", file.tags)
+
+    for key, value in mp4_tags.items():
         # Freeform atoms: ----:com.apple.iTunes:SERIES -> txxx:series
         if key.startswith("----:"):
             parts = key.split(":")
@@ -152,7 +180,7 @@ def _normalise_mp4(file: FileType) -> dict[str, str]:
             continue
 
         # Standard atoms
-        norm_key = _MP4_KEY_MAP.get(key, _MP4_KEY_MAP.get(key.lower(), key.lower()))
+        norm_key = _MP4_KEY_MAP.get(key) or _MP4_KEY_MAP.get(key.lower()) or key.lower()
         if value:
             raw = value[0]
             tags[norm_key] = str(raw)
@@ -166,7 +194,11 @@ def _normalise_vorbis(file: FileType) -> dict[str, str]:
     if file.tags is None:
         return tags
 
-    for key, values in file.tags.items():
+    # VComment is the shared base for VCFLACDict / OggVCommentDict / etc.
+    # See _normalise_id3 for why cast() is used instead of isinstance.
+    vc_tags = cast("VComment", file.tags)
+
+    for key, values in vc_tags.items():
         if values:
             tags[key.lower()] = str(values[0]) if isinstance(values, list) else str(values)
 
@@ -179,14 +211,14 @@ def _normalise_asf(file: FileType) -> dict[str, str]:
     if file.tags is None:
         return tags
 
-    # Type guard: ensure file.tags is narrowed to ASFTag for the type checker.
-    assert isinstance(file.tags, mutagen.asf.ASFTag)
+    # See _normalise_id3 for why cast() is used here instead of isinstance.
+    asf_tags = cast("mutagen.asf.ASFTags", file.tags)
 
     # WMA tag values come back as a list of ASFBaseAttribute objects, where
     # the actual string lives on .value. Older mutagen versions occasionally
     # hand back a plain string, so handle both shapes.
-    for key, values in file.tags.items():
-        norm_key = _ASF_KEY_MAP.get(key.lower(), key.lower())
+    for key, values in asf_tags.items():
+        norm_key = _ASF_KEY_MAP.get(key.lower()) or key.lower()
         if values:
             raw = values[0]
             tags[norm_key] = str(raw.value) if isinstance(raw, mutagen.asf.ASFBaseAttribute) else str(raw)
@@ -224,7 +256,7 @@ def load_tags(filepath: str) -> dict[str, str]:
     if isinstance(file, mutagen.mp4.MP4):
         return _normalise_mp4(file)
 
-    if isinstance(file.tags, mutagen.asf.ASFTag):
+    if isinstance(file.tags, mutagen.asf.ASFTags):
         return _normalise_asf(file)
 
     # Vorbis comments (FLAC, OGG, Opus) -- treated as the generic fallback
