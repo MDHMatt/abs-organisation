@@ -213,7 +213,10 @@ def _process_file(
     show_quality: bool = False,
 ) -> None:
     """Process a single audio file: resolve metadata, dedup, move/skip."""
-    # Resolve metadata and infer fallbacks
+    # ─── Stage 1: metadata ────────────────────────────────────────────────
+    # Reuse cached metadata from the book-dedup pre-pass when available;
+    # otherwise read tags now. Audio info is only computed when --show-quality
+    # is enabled.
     abs_path = os.path.abspath(filepath)
     audio_info: AudioInfo | None = None
 
@@ -227,10 +230,11 @@ def _process_file(
     ip = infer_from_path(filepath, args.source)
     ifn = infer_from_filename(os.path.basename(filepath))
 
-    # Build destination
+    # ─── Stage 2: destination ─────────────────────────────────────────────
+    # Combine tags + path inference + filename inference into a final dest.
     dest = build_dest(filepath, meta, ip, ifn, args.dest)
 
-    # Already-in-place check
+    # Already-in-place check — short-circuit before logging anything noisy.
     if os.path.normpath(os.path.abspath(filepath)) == os.path.normpath(os.path.abspath(dest.dest_file)):
         log.logd(f"  SKIP (already in place): {os.path.basename(filepath)}")
         counters.skipped += 1
@@ -242,7 +246,9 @@ def _process_file(
         audio_info=audio_info if show_quality else None,
     )
 
-    # Dedup check
+    # ─── Stage 3: dedup decision ──────────────────────────────────────────
+    # tracker.check() compares fingerprints against both in-run claimed
+    # destinations and pre-existing files at the target path.
     dedup_result = tracker.check(filepath, dest.dest_file)
 
     if dedup_result.action == DedupAction.QUARANTINE:
@@ -266,7 +272,11 @@ def _process_file(
         counters.conflict += 1
         log.logy(f"  CONFLICT: renaming to {dest_file}")
 
-    # Register in seen_dests BEFORE the dry-run check
+    # ─── Stage 4: claim the destination ───────────────────────────────────
+    # tracker.register() MUST run before the dry-run guard so that later
+    # files in the same run see this dest as claimed and route around it.
+    # Without this, two source files mapping to the same dest would both
+    # report "would move" in dry-run mode and silently collide on apply.
     tracker.register(dest_file, filepath)
 
     if args.dry_run:
@@ -275,7 +285,7 @@ def _process_file(
         log.log()
         return
 
-    # Live move
+    # ─── Stage 5: live move ───────────────────────────────────────────────
     try:
         os.makedirs(dest_dir, exist_ok=True)
         shutil.move(filepath, dest_file)
@@ -309,7 +319,7 @@ def main(argv: list[str] | None = None) -> None:
             log.logr(f"ERROR: source not found: {args.source}")
             sys.exit(1)
 
-        # Discover files
+        # ─── Phase 1: discover ────────────────────────────────────────────
         files = _discover_audio_files(args.source)
         total = len(files)
         log.log(f"Found {log.bold(total)} audio file(s)")
@@ -318,16 +328,15 @@ def main(argv: list[str] | None = None) -> None:
             log.log()
             return
 
-        # Pre-compute fingerprints in parallel
+        # ─── Phase 2: fingerprint pre-compute (parallel I/O) ──────────────
         log.log(f"Pre-computing fingerprints ({workers} workers)...")
         fp_cache = precompute_fingerprints(files, max_workers=workers)
         log.log(f"  {len(fp_cache)} fingerprints cached")
 
-        # Process
         tracker = DedupTracker(fingerprint_cache=fp_cache)
         counters = Counters()
 
-        # Book-level dedup: two-pass mode
+        # ─── Phase 3: book-dedup (optional, two-pass mode) ────────────────
         metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None
         quarantine_files: set[str] = set()
 
@@ -344,6 +353,9 @@ def main(argv: list[str] | None = None) -> None:
 
         show_quality = getattr(args, "show_quality", False)
 
+        # ─── Phase 4: per-file processing (sequential) ────────────────────
+        # Sequential because DedupTracker has ordering dependencies on
+        # claimed destinations within the run.
         for n, filepath in enumerate(files, 1):
             log.log()
             log.log(f"{log.bold(f'[{n}/{total}]')}")
@@ -374,6 +386,7 @@ def main(argv: list[str] | None = None) -> None:
                 counters.failed += 1
                 log.log()
 
+        # ─── Phase 5: summary ─────────────────────────────────────────────
         _print_summary(counters, args.dry_run, args.dupes, log)
 
     except KeyboardInterrupt:

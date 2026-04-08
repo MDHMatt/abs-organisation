@@ -9,7 +9,15 @@ from absorg.constants import AUDIBLE_ID_RE, ROLE_QUALIFIERS_RE, TRANSLITERATE_MA
 
 
 def _strip_accents(text: str) -> str:
-    """Remove combining marks after NFKD decomposition, then transliterate."""
+    """Strip diacritics and transliterate non-decomposable letters.
+
+    Two-stage approach: first NFKD-decompose so most accented characters
+    become a base letter plus a combining mark, then drop everything in
+    the Unicode "M" (mark) category. NFKD doesn't touch ligatures or
+    letters that have no decomposition (German ``ß``, Nordic ``ø``/``æ``,
+    Icelandic ``þ``, etc.) so a second pass through ``TRANSLITERATE_MAP``
+    handles those manually.
+    """
     nfkd = unicodedata.normalize("NFKD", text)
     # Strip combining marks (category M)
     stripped = "".join(ch for ch in nfkd if unicodedata.category(ch)[0] != "M")
@@ -58,9 +66,16 @@ def normalise_book(name: str) -> str:
     # Strip numeric IDs like [1338589016]
     s = re.sub(r"\s*\[\d{10,}\]", "", s)
 
-    # Strip subtitles after : or  -  BUT ONLY if not a volume/series marker
-    # Volume/series markers like "Series 1", "Act II", "Books 1-3", "Part 1", etc.
-    # should be preserved as they distinguish different works.
+    # Subtitle vs. volume-marker decision:
+    # A title like "Good Omens: The Nice and Accurate Prophecies" has a
+    # decorative subtitle that should be stripped so two editions of the
+    # same book group together. But a title like "Alan Partridge: Series 2"
+    # has a *volume marker* — stripping it would conflate Series 1 and
+    # Series 2 as duplicates. So when the text after a `:` or ` - ` starts
+    # with a volume keyword (series, part, act, volume, book, vol, etc.)
+    # followed by a number/letter, preserve the marker as a distinguishing
+    # suffix; otherwise treat the trailing text as a regular subtitle and
+    # drop it.
     volume_marker_pattern = r"\b(series|part|act|volume|book|books|vol|no|disc|disk|cd)\s+(?:\d+|[ivx]+|[a-z])"
 
     for sep in (":", " - "):
@@ -71,12 +86,13 @@ def normalise_book(name: str) -> str:
             # Look for a volume marker within the after_sep text
             vol_match = re.search(volume_marker_pattern, after_sep, flags=re.IGNORECASE)
             if vol_match:
-                # Found a volume marker, extract it and append to base title
-                vol_marker = after_sep[vol_match.start():].split()[0:2]  # Get the marker and its number/label
+                # Volume marker found — keep just the marker (e.g. "series 2")
+                # and append it to the base title so editions stay distinct.
+                vol_marker = after_sep[vol_match.start():].split()[0:2]  # marker word + its number/label
                 vol_text = " ".join(vol_marker) if len(vol_marker) >= 2 else after_sep[vol_match.start():]
                 s = before_sep + " " + vol_text
             elif len(before_sep) >= 3:
-                # No volume marker found, it's a regular subtitle, strip it
+                # No volume marker — it's a decorative subtitle, drop it.
                 s = before_sep
                 break
 

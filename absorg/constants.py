@@ -1,4 +1,20 @@
-"""Shared constants for absorg."""
+"""Shared constants for absorg.
+
+Grouped roughly by purpose:
+
+- ``AUDIO_EXTENSIONS`` — file extensions the discovery walk recognises.
+- ``FORMAT_PREFERENCE`` — per-extension scoring used by the book-level
+  dedup resolver to prefer M4B over MP3, etc.
+- ``UNKNOWN_AUTHOR`` / ``UNKNOWN_BOOK`` / ``PATH_COMPONENT_MAX_LENGTH``
+  — fallbacks and limits used by ``pathbuilder.build_dest()``.
+- ``METADATA_TAG_CHAINS`` — per-field tag priority chains consulted by
+  ``metadata.resolve_metadata()``.
+- ``SANITISE_MAP`` — translation table mapping filesystem-illegal
+  characters to safe Unicode lookalikes.
+- ``TRANSLITERATE_MAP`` — accent-stripping fallback used by
+  ``normalise._strip_accents()`` for characters that don't decompose
+  cleanly under NFKD (German ß, Nordic ø/æ, etc.).
+"""
 
 AUDIO_EXTENSIONS = frozenset({
     "mp3", "m4a", "m4b", "m4p", "flac", "ogg", "opus",

@@ -34,6 +34,7 @@ class AbsorgLogger:
         return str(text)
 
     def close(self) -> None:
+        """Flush and close the underlying log file."""
         self._file.flush()
         self._file.close()
 
@@ -69,6 +70,15 @@ class AbsorgLogger:
     # -- internals ------------------------------------------------------------
 
     def _emit(self, msg: str, color: str = "") -> None:
+        """Write *msg* to stdout and the log file.
+
+        On Windows, the console encoding is often cp1252 and cannot
+        render every Unicode character that may appear in tag-derived
+        strings. When ``print()`` raises ``UnicodeEncodeError`` the
+        message is re-encoded through the active stdout encoding with
+        ``errors="replace"`` so the run continues. The log file is
+        always UTF-8 and never falls back.
+        """
         # stdout: with color when available, handle encoding errors on Windows
         try:
             if self.use_color and color:

@@ -1,3 +1,11 @@
+"""Fallback inference for author and book metadata.
+
+When an audio file's embedded tags are missing or empty, the organiser
+falls back to inferring the author and book from (a) the directory
+structure relative to the source root and (b) common filename patterns
+like ``Author - Book - Chapter.ext``.
+"""
+
 from __future__ import annotations
 
 import os

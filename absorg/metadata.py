@@ -107,7 +107,19 @@ def _normalise_id3(file: mutagen.FileType) -> dict[str, str]:
 
 
 def _normalise_mp4(file: mutagen.FileType) -> dict[str, str]:
-    """Normalise MP4/M4A/M4B tags to a flat lowercase-keyed dict."""
+    """Normalise MP4/M4A/M4B tags to a flat lowercase-keyed dict.
+
+    MP4 atoms come in three flavours that all need different handling:
+
+    1. **Freeform atoms** (``----:com.apple.iTunes:SERIES``) — vendor-
+       specific tags. Stored under the ``txxx:`` namespace so they share
+       a key space with ID3 custom frames in :data:`METADATA_TAG_CHAINS`.
+    2. **Numeric pair atoms** (``trkn``, ``disk``) — return ``(number,
+       total)`` tuples; we keep just the leading number as a string so
+       the post-processing in :func:`resolve_metadata` can extract digits.
+    3. **Standard atoms** (``\\xa9alb``, ``aART`` etc.) — looked up in
+       ``_MP4_KEY_MAP`` and stored under their normalised name.
+    """
     tags: dict[str, str] = {}
     if file.tags is None:
         return tags
@@ -122,13 +134,16 @@ def _normalise_mp4(file: mutagen.FileType) -> dict[str, str]:
                 tags[norm_key] = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
             continue
 
-        # Track/disc atoms return lists of (number, total) tuples
+        # Track/disc atoms: flatten the (number, total) tuple to just the number,
+        # so resolve_metadata's _parse_int can extract leading digits uniformly
+        # across formats.
         if key in ("trkn", "disk"):
             if value and isinstance(value[0], tuple):
                 tags[key] = str(value[0][0])
             continue
 
-        # Cover art -- skip
+        # Skip cover art — it's a binary blob, not a string tag, and the
+        # cover-extraction module reads it directly via mutagen.
         if key == "covr":
             continue
 
@@ -160,6 +175,9 @@ def _normalise_asf(file: mutagen.FileType) -> dict[str, str]:
     if file.tags is None:
         return tags
 
+    # WMA tag values come back as a list of ASFBaseAttribute objects, where
+    # the actual string lives on .value. Older mutagen versions occasionally
+    # hand back a plain string, so handle both shapes.
     for key, values in file.tags.items():
         norm_key = _ASF_KEY_MAP.get(key.lower(), key.lower())
         if values:
@@ -290,7 +308,10 @@ def resolve_metadata(filepath: str) -> MetadataResult:
     if result.year:
         result.year = result.year[:4]
 
-    # Clear series if it is identical to the book title (not useful info).
+    # Clear series if it is identical to the book title. Some taggers
+    # populate ALBUM and SERIES with the same string, which would
+    # otherwise cause pathbuilder to emit a duplicate ``Series/Book``
+    # path segment like ``Foo/Foo/`` for every file in the book.
     if result.series and result.series == result.book:
         result.series = ""
 
