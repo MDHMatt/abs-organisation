@@ -2,10 +2,7 @@
 
 import os
 
-import pytest
-
 from absorg.bookdedup import (
-    BookDedupDecision,
     BookEdition,
     BookGroup,
     build_book_inventory,

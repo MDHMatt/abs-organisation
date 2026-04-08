@@ -57,17 +57,17 @@ def normalise_book(name: str) -> str:
     s = re.sub(AUDIBLE_ID_RE, "", s, flags=re.IGNORECASE)
     # Strip numeric IDs like [1338589016]
     s = re.sub(r"\s*\[\d{10,}\]", "", s)
-    
+
     # Strip subtitles after : or  -  BUT ONLY if not a volume/series marker
     # Volume/series markers like "Series 1", "Act II", "Books 1-3", "Part 1", etc.
     # should be preserved as they distinguish different works.
     volume_marker_pattern = r"\b(series|part|act|volume|book|books|vol|no|disc|disk|cd)\s+(?:\d+|[ivx]+|[a-z])"
-    
+
     for sep in (":", " - "):
         if sep in s:
             before_sep = s[: s.index(sep)].strip()
             after_sep = s[s.index(sep) + len(sep):].strip()
-            
+
             # Look for a volume marker within the after_sep text
             vol_match = re.search(volume_marker_pattern, after_sep, flags=re.IGNORECASE)
             if vol_match:
@@ -79,7 +79,7 @@ def normalise_book(name: str) -> str:
                 # No volume marker found, it's a regular subtitle, strip it
                 s = before_sep
                 break
-    
+
     # Strip leading articles
     for article in ("the ", "a ", "an "):
         if s.startswith(article):

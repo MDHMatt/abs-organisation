@@ -1,8 +1,6 @@
 """Tests for metadata extraction via mutagen."""
 
-import os
 
-import pytest
 
 from absorg.metadata import MetadataResult, get_tag, load_tags, resolve_metadata
 
@@ -120,8 +118,8 @@ class TestResolveMetadata:
 
     def test_year_truncated_to_four(self, make_mp3):
         """Year like '2023-04-01' should become '2023'."""
-        from mutagen.mp3 import MP3
         from mutagen.id3 import TDRC
+        from mutagen.mp3 import MP3
 
         path = make_mp3("test.mp3", artist="Placeholder")
         audio = MP3(path)

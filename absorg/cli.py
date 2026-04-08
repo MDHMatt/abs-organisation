@@ -11,10 +11,9 @@ from dataclasses import dataclass
 from absorg.audioinfo import AudioInfo, extract_audio_info, format_quality
 from absorg.bookdedup import (
     BookDedupDecision,
-    BookEdition,
+    _edition_summary,
     build_book_inventory,
     resolve_book_duplicates,
-    _edition_summary,
 )
 from absorg.constants import AUDIO_EXTENSIONS
 from absorg.cover import extract_cover
@@ -100,9 +99,9 @@ def _print_header(args: argparse.Namespace, log: AbsorgLogger, workers: int) -> 
     log.log(f"  Log         : {args.log}")
     log.log(f"  Cover art   : {'yes' if not args.no_cover else 'no'}")
     if getattr(args, "book_dedup", False):
-        log.log(f"  Book dedup  : yes (prefer M4B, prefer newer)")
+        log.log("  Book dedup  : yes (prefer M4B, prefer newer)")
     if getattr(args, "show_quality", False):
-        log.log(f"  Show quality: yes")
+        log.log("  Show quality: yes")
     worker_label = "auto-detected" if not args.workers else "user-specified"
     log.log(f"  Workers     : {workers} ({worker_label})")
     if args.dry_run:

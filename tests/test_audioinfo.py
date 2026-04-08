@@ -1,8 +1,6 @@
 """Tests for audio info extraction."""
 
-import os
 
-import pytest
 
 from absorg.audioinfo import AudioInfo, extract_audio_info, format_duration, format_quality
 

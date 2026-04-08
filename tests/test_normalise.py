@@ -1,6 +1,5 @@
 """Tests for author and book name normalisation."""
 
-import pytest
 
 from absorg.normalise import normalise_author, normalise_book
 

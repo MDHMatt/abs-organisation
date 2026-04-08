@@ -3,10 +3,10 @@
 import os
 
 import pytest
-
-from absorg.cli import Counters, _discover_audio_files, main, parse_args
+from mutagen.id3 import TALB, TIT2, TPE2
 from mutagen.mp3 import MP3
-from mutagen.id3 import TPE2, TALB, TIT2
+
+from absorg.cli import _discover_audio_files, main, parse_args
 
 
 class TestParseArgs:
@@ -116,8 +116,8 @@ class TestMainDryRun:
         with open(mp3_path, "wb") as f:
             f.write(frame * 5)
 
+        from mutagen.id3 import TALB, TIT2, TPE2
         from mutagen.mp3 import MP3
-        from mutagen.id3 import TPE2, TALB, TIT2
 
         audio = MP3(mp3_path)
         audio.add_tags()

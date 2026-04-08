@@ -1,7 +1,6 @@
 """Shared test fixtures for absorg."""
 
 import os
-import struct
 
 import pytest
 
@@ -41,7 +40,7 @@ def make_mp3(tmp_path):
 
         if tags:
             import mutagen.mp3
-            from mutagen.id3 import ID3, TIT2, TPE1, TPE2, TALB, TRCK, TPOS, TXXX
+            from mutagen.id3 import TALB, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX
 
             audio = mutagen.mp3.MP3(full)
             if audio.tags is None:

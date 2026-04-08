@@ -3,7 +3,7 @@
 import os
 
 from absorg.metadata import MetadataResult
-from absorg.pathbuilder import DestResult, build_dest
+from absorg.pathbuilder import build_dest
 
 
 def _meta(**kwargs) -> MetadataResult:

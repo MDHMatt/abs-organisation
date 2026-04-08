@@ -2,8 +2,6 @@
 
 import os
 
-import pytest
-
 from absorg.cover import extract_cover
 
 
@@ -31,8 +29,8 @@ class TestExtractCover:
 
     def test_extract_from_mp3_with_art(self, make_mp3, tmp_path, logger):
         """MP3 with embedded APIC frame → cover.jpg written."""
-        from mutagen.mp3 import MP3
         from mutagen.id3 import APIC
+        from mutagen.mp3 import MP3
 
         path = make_mp3("art.mp3", artist="Test")
         audio = MP3(path)
@@ -59,8 +57,8 @@ class TestExtractCover:
 
     def test_idempotent_after_extract(self, make_mp3, tmp_path, logger):
         """Second call should return False since cover.jpg exists."""
-        from mutagen.mp3 import MP3
         from mutagen.id3 import APIC
+        from mutagen.mp3 import MP3
 
         path = make_mp3("art.mp3", artist="Test")
         audio = MP3(path)

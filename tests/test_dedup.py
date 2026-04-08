@@ -1,11 +1,8 @@
 """Tests for dedup fingerprinting and collision detection."""
 
 import os
-import shutil
 
-import pytest
-
-from absorg.dedup import DedupAction, DedupResult, DedupTracker, fingerprint, precompute_fingerprints, quarantine
+from absorg.dedup import DedupAction, DedupTracker, fingerprint, precompute_fingerprints, quarantine
 
 
 class TestFingerprint:

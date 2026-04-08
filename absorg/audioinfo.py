@@ -6,12 +6,12 @@ import logging
 from dataclasses import dataclass
 
 import mutagen
+import mutagen.asf
+import mutagen.flac
 import mutagen.mp3
 import mutagen.mp4
-import mutagen.flac
-import mutagen.oggvorbis
 import mutagen.oggopus
-import mutagen.asf
+import mutagen.oggvorbis
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 
-
 # ANSI escape codes
 _RED = "\033[0;31m"
 _YELLOW = "\033[1;33m"

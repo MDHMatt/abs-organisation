@@ -22,6 +22,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install (editable, with test deps)
 pip install -e ".[test]"
 
+# Install with dev deps (includes ruff linter)
+pip install -e ".[dev]"
+
 # Dry-run (default — no files moved)
 absorg --source /path/to/unsorted --dest /path/to/library
 
@@ -36,6 +39,12 @@ pytest tests/test_sanitise.py -v
 
 # Run a single test
 pytest tests/test_pathbuilder.py::TestBuildDest::test_basic_author_book -v
+
+# Lint Python
+ruff check absorg/ tests/
+
+# Auto-fix Python lint
+ruff check --fix absorg/ tests/
 
 # Docker
 docker-compose run --rm absorg              # dry run
@@ -184,6 +193,10 @@ DEST/Author/[Series/[NN - ]]Book/[DD-TNN - ]Chapter.ext
 - `os.path.normpath()` for all path comparisons
 - `os.path.join()` for path construction (never hardcode `/`)
 - Logger handles `UnicodeEncodeError` for cp1252 console output
+
+### Linting
+
+The project uses [ruff](https://github.com/astral-sh/ruff) for Python linting (configured in `pyproject.toml`) and [markdownlint](https://github.com/DavidAnson/markdownlint) for markdown style (configured in `.markdownlint.json`). The ruff configuration pins line-length to 120, targets Python 3.11+, and selects rules for error checking, formatting, and code simplification. Markdownlint enforces compact table separators (`|---|---|`) and asterisk bold (`**bold**`), matching the existing de facto project style.
 
 ## Testing
 

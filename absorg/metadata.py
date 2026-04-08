@@ -14,9 +14,9 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 import mutagen
+import mutagen.asf
 import mutagen.id3
 import mutagen.mp4
-import mutagen.asf
 
 from absorg.constants import METADATA_TAG_CHAINS
 

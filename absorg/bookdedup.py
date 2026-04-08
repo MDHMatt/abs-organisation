@@ -20,7 +20,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from absorg.audioinfo import AudioInfo, extract_audio_info, format_duration, format_quality
+from absorg.audioinfo import AudioInfo, extract_audio_info, format_duration
 from absorg.constants import FORMAT_PREFERENCE
 from absorg.inference import infer_from_filename, infer_from_path
 from absorg.metadata import MetadataResult, resolve_metadata
