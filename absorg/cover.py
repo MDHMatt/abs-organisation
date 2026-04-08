@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
 from typing import TYPE_CHECKING
 
@@ -35,10 +36,8 @@ def extract_cover(source_file: str, dest_dir: str, logger: AbsorgLogger) -> bool
     except OSError as exc:
         logger.logr(f"  Failed to write cover art: {exc}")
         # Clean up partial file
-        try:
+        with contextlib.suppress(OSError):
             os.remove(cover_path)
-        except OSError:
-            pass
         return False
 
 

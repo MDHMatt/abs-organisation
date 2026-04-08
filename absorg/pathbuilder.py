@@ -115,10 +115,7 @@ def build_dest(
 
         st = sanitise(metadata.title or os.path.splitext(filename)[0])
 
-        if prefix:
-            dest_filename = f"{prefix} - {st}.{ext_lower}"
-        else:
-            dest_filename = f"{st}.{ext_lower}"
+        dest_filename = f"{prefix} - {st}.{ext_lower}" if prefix else f"{st}.{ext_lower}"
 
     # Step 5: Return
     return DestResult(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import shutil
@@ -124,10 +125,9 @@ def precompute_fingerprints(
         }
         for future in as_completed(futures):
             norm_path = futures[future]
-            try:
+            # Files that fail will be computed on-demand in check()
+            with contextlib.suppress(OSError):
                 cache[norm_path] = future.result()
-            except OSError:
-                pass  # will be computed on-demand in check()
     return cache
 
 

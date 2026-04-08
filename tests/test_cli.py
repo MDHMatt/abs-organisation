@@ -137,7 +137,7 @@ class TestMainDryRun:
         assert os.path.exists(mp3_path)
         # Dest should have no audio files
         dest_files = []
-        for dp, dn, fnames in os.walk(str(dest)):
+        for _dp, _dn, fnames in os.walk(str(dest)):
             for fn in fnames:
                 dest_files.append(fn)
         assert len(dest_files) == 0
@@ -201,7 +201,7 @@ class TestMainLiveMove:
 
         # Should be somewhere under dest
         moved_files = []
-        for dp, dn, fnames in os.walk(str(dest)):
+        for dp, _dn, fnames in os.walk(str(dest)):
             for fn in fnames:
                 moved_files.append(os.path.join(dp, fn))
         assert len(moved_files) == 1
@@ -266,12 +266,12 @@ class TestBookDedup:
 
         # One edition should be in dest, the other in dupes
         dest_files = []
-        for dp, dn, fnames in os.walk(str(dest)):
+        for _dp, _dn, fnames in os.walk(str(dest)):
             for fn in fnames:
                 if fn.endswith(".mp3"):
                     dest_files.append(fn)
         dupes_files = []
-        for dp, dn, fnames in os.walk(str(dupes)):
+        for _dp, _dn, fnames in os.walk(str(dupes)):
             for fn in fnames:
                 if fn.endswith(".mp3"):
                     dupes_files.append(fn)
@@ -313,7 +313,7 @@ class TestBookDedup:
 
         # Both files should end up somewhere (dest or dest with conflicts)
         dest_mp3s = []
-        for dp, dn, fnames in os.walk(str(dest)):
+        for _dp, _dn, fnames in os.walk(str(dest)):
             for fn in fnames:
                 if fn.endswith(".mp3"):
                     dest_mp3s.append(fn)
@@ -321,7 +321,7 @@ class TestBookDedup:
         # but both editions with different content should survive
         total = len(dest_mp3s)
         dupes_count = 0
-        for dp, dn, fnames in os.walk(str(dupes)):
+        for _dp, _dn, fnames in os.walk(str(dupes)):
             for fn in fnames:
                 if fn.endswith(".mp3"):
                     dupes_count += 1
