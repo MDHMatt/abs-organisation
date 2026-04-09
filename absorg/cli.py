@@ -345,7 +345,7 @@ def main(argv: list[str] | None = None) -> None:
             log.log(log.bold(f"Scanning for book-level duplicates ({workers} workers)..."))
             groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
             if groups:
-                quarantine_files, decisions = resolve_book_duplicates(groups)
+                quarantine_files, decisions = resolve_book_duplicates(groups, args.source)
                 counters.book_dedup_groups = len(decisions)
                 _log_book_dedup_decisions(decisions, log)
             else:

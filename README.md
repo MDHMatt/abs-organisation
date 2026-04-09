@@ -3,7 +3,7 @@
 Organise audiobook libraries for [Audiobookshelf](https://www.audiobookshelf.org/) by reading embedded metadata tags.
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)
-![Version](https://img.shields.io/badge/version-2.3.1-green)
+![Version](https://img.shields.io/badge/version-2.3.2-green)
 ![License](https://img.shields.io/badge/license-Unlicense-lightgrey)
 ![Docker](https://img.shields.io/badge/docker-mdhmatt%2Fabs--organiser-blue)
 

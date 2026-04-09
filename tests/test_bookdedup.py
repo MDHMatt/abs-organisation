@@ -128,6 +128,195 @@ class TestResolveBookDuplicates:
         assert kept_file not in quarantine_files
 
 
+class TestStructuralTiebreaker:
+    """Issue 12: when score_edition ties, the structural tiebreaker must
+    prefer better-organised paths over typos, placeholders, and loose
+    root-level files."""
+
+    def _edition(self, source_dir, files, author="Adrian Tchaikovsky", book="Children of Memory"):
+        return BookEdition(
+            source_dir=source_dir,
+            files=[_norm(f) for f in files],
+            format="m4b",
+            year="2022",
+            avg_bitrate=125000,
+            total_duration=48366,
+            author=author,
+            book=book,
+            file_count=len(files),
+        )
+
+    def test_correct_spelling_beats_typo(self, tmp_path):
+        """Adrian Tchaikovsky (correct) must beat Adrian Tchikovski (typo)."""
+        source = str(tmp_path)
+        correct_dir = os.path.join(source, "Adrian Tchaikovsky", "Children of Memory")
+        typo_dir = os.path.join(source, "Adrian Tchikovski", "Children of Memory")
+        os.makedirs(correct_dir)
+        os.makedirs(typo_dir)
+
+        correct = self._edition(correct_dir, [os.path.join(correct_dir, "file.m4b")])
+        typo = self._edition(typo_dir, [os.path.join(typo_dir, "file.m4b")])
+
+        # Put the typo first in the list to make sure the old alphabetical-
+        # last-wins-under-reverse bug would pick it; the fix must flip it.
+        groups = {
+            ("adrian tchaikovsky", "children of memory"): BookGroup(
+                norm_key=("adrian tchaikovsky", "children of memory"),
+                editions=[typo, correct],
+            ),
+        }
+        _, decisions = resolve_book_duplicates(groups, source_dir=source)
+        assert decisions[0].kept.source_dir == correct_dir, (
+            f"Expected correct-spelling folder to be kept, got {decisions[0].kept.source_dir}"
+        )
+
+    def test_tagged_author_beats_placeholder_unknown(self, tmp_path):
+        """Arthur Conan Doyle folder must beat _Unknown Author/Sherlock Holmes."""
+        source = str(tmp_path)
+        tagged_dir = os.path.join(source, "Arthur Conan Doyle", "Sherlock Holmes")
+        placeholder_dir = os.path.join(source, "_Unknown Author", "Sherlock Holmes [B06X1BRZYC]")
+        os.makedirs(tagged_dir)
+        os.makedirs(placeholder_dir)
+
+        tagged = self._edition(
+            tagged_dir, [os.path.join(tagged_dir, "file.m4b")],
+            author="Arthur Conan Doyle", book="Sherlock Holmes",
+        )
+        placeholder = self._edition(
+            placeholder_dir, [os.path.join(placeholder_dir, "file.m4b")],
+            author="Arthur Conan Doyle", book="Sherlock Holmes",
+        )
+
+        groups = {
+            ("arthur conan doyle", "sherlock holmes"): BookGroup(
+                norm_key=("arthur conan doyle", "sherlock holmes"),
+                editions=[placeholder, tagged],
+            ),
+        }
+        _, decisions = resolve_book_duplicates(groups, source_dir=source)
+        assert decisions[0].kept.source_dir == tagged_dir
+
+    def test_organised_folder_beats_root_loose_file(self, tmp_path):
+        """Andy Weir/The Martian (folder) must beat /The Martian.m4b (root-loose)."""
+        source = str(tmp_path)
+        folder_dir = os.path.join(source, "Andy Weir", "The Martian")
+        os.makedirs(folder_dir)
+        loose_file = os.path.join(source, "The Martian.m4b")
+        # inventory stores the full file path as source_dir for root-loose files
+        folder_edition = self._edition(
+            folder_dir, [os.path.join(folder_dir, "file.m4b")],
+            author="Andy Weir", book="The Martian",
+        )
+        loose_edition = BookEdition(
+            source_dir=loose_file,
+            files=[_norm(loose_file)],
+            format="m4b",
+            year="2022",
+            avg_bitrate=125000,
+            total_duration=48366,
+            author="Andy Weir",
+            book="The Martian",
+            file_count=1,
+        )
+        # The loose file must actually exist on disk for the tiebreak key
+        # to recognise it as a file vs directory. Create a stub.
+        with open(loose_file, "wb") as f:
+            f.write(b"")
+
+        groups = {
+            ("andy weir", "martian"): BookGroup(
+                norm_key=("andy weir", "martian"),
+                editions=[loose_edition, folder_edition],
+            ),
+        }
+        _, decisions = resolve_book_duplicates(groups, source_dir=source)
+        assert decisions[0].kept.source_dir == folder_dir
+
+    def test_higher_score_still_wins_over_tiebreak(self, tmp_path):
+        """Score_edition must still dominate the tiebreak when scores differ."""
+        source = str(tmp_path)
+        # Score differs: good_dir is an MP3 (lower format_score),
+        # bad_dir is an M4B (higher format_score). Tiebreak would prefer
+        # good_dir, but score must win.
+        good_dir = os.path.join(source, "Adrian Tchaikovsky", "Children of Memory")
+        bad_dir = os.path.join(source, "_Unknown Author", "Children of Memory")
+        os.makedirs(good_dir)
+        os.makedirs(bad_dir)
+
+        mp3_good = BookEdition(
+            source_dir=good_dir, files=[_norm(os.path.join(good_dir, "f.mp3"))],
+            format="mp3", year="2022", avg_bitrate=128000, total_duration=3600,
+            author="Adrian Tchaikovsky", book="Children of Memory", file_count=1,
+        )
+        m4b_bad = BookEdition(
+            source_dir=bad_dir, files=[_norm(os.path.join(bad_dir, "f.m4b"))],
+            format="m4b", year="2022", avg_bitrate=128000, total_duration=3600,
+            author="Adrian Tchaikovsky", book="Children of Memory", file_count=1,
+        )
+        groups = {
+            ("adrian tchaikovsky", "children of memory"): BookGroup(
+                norm_key=("adrian tchaikovsky", "children of memory"),
+                editions=[mp3_good, m4b_bad],
+            ),
+        }
+        _, decisions = resolve_book_duplicates(groups, source_dir=source)
+        assert decisions[0].kept.source_dir == bad_dir  # M4B wins on score
+
+
+class TestBitrateReasonSuppression:
+    """Issue 13: higher-bitrate reason must be suppressed when both sides
+    round to the same kbps display value."""
+
+    def test_sub_kbps_tie_suppresses_reason(self, tmp_path):
+        """62,800 bps vs 62,100 bps must not emit 'higher bitrate (62kbps vs 62kbps)'."""
+        source = str(tmp_path)
+        a_dir = os.path.join(source, "A", "B")
+        c_dir = os.path.join(source, "C", "B")
+        os.makedirs(a_dir)
+        os.makedirs(c_dir)
+
+        hi = BookEdition(
+            source_dir=a_dir, files=[_norm(os.path.join(a_dir, "f.m4b"))],
+            format="m4b", year="2019", avg_bitrate=62800, total_duration=3600,
+            author="Author", book="Book", file_count=1,
+        )
+        lo = BookEdition(
+            source_dir=c_dir, files=[_norm(os.path.join(c_dir, "f.m4b"))],
+            format="m4b", year="2019", avg_bitrate=62100, total_duration=3600,
+            author="Author", book="Book", file_count=1,
+        )
+        groups = {
+            ("author", "book"): BookGroup(norm_key=("author", "book"), editions=[hi, lo]),
+        }
+        _, decisions = resolve_book_duplicates(groups, source_dir=source)
+        assert "higher bitrate" not in decisions[0].reason
+        assert "62kbps vs 62kbps" not in decisions[0].reason
+
+    def test_multi_kbps_delta_still_emits_reason(self, tmp_path):
+        """A 114 vs 113 kbps delta must still emit the reason."""
+        source = str(tmp_path)
+        a_dir = os.path.join(source, "A", "B")
+        c_dir = os.path.join(source, "C", "B")
+        os.makedirs(a_dir)
+        os.makedirs(c_dir)
+
+        hi = BookEdition(
+            source_dir=a_dir, files=[_norm(os.path.join(a_dir, "f.m4b"))],
+            format="m4b", year="2019", avg_bitrate=114000, total_duration=3600,
+            author="Author", book="Book", file_count=1,
+        )
+        lo = BookEdition(
+            source_dir=c_dir, files=[_norm(os.path.join(c_dir, "f.m4b"))],
+            format="m4b", year="2019", avg_bitrate=113000, total_duration=3600,
+            author="Author", book="Book", file_count=1,
+        )
+        groups = {
+            ("author", "book"): BookGroup(norm_key=("author", "book"), editions=[hi, lo]),
+        }
+        _, decisions = resolve_book_duplicates(groups, source_dir=source)
+        assert "higher bitrate (114kbps vs 113kbps)" in decisions[0].reason
+
+
 class TestBuildBookInventory:
     def test_groups_by_normalised_key(self, make_mp3, tmp_path):
         """Two dirs with same book under different author names should group."""

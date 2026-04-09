@@ -127,3 +127,66 @@ class TestBuildDest:
             dest_dir=dest,
         )
         assert result.dest_file.endswith(".mp3")
+
+    def test_filename_stem_fallback_strips_existing_track_prefix(self, tmp_path):
+        """Re-running over an already-prefixed filename must not stack another prefix (#10)."""
+        dest = str(tmp_path)
+        # No title tag, filename already has "01 - " from a previous run.
+        result = build_dest(
+            filepath="/src/01 - Introduction.mp3",
+            metadata=_meta(author="A", book="B", track="1"),
+            infer_path=("", ""),
+            infer_file=("", ""),
+            dest_dir=dest,
+        )
+        assert os.path.basename(result.dest_file) == "01 - Introduction.mp3"
+
+    def test_filename_stem_fallback_strips_double_stacked_prefix(self, tmp_path):
+        """A filename like '01 - 01 - Introduction' should heal to one prefix (#10)."""
+        dest = str(tmp_path)
+        result = build_dest(
+            filepath="/src/01 - 01 - Introduction.mp3",
+            metadata=_meta(author="A", book="B", track="1"),
+            infer_path=("", ""),
+            infer_file=("", ""),
+            dest_dir=dest,
+        )
+        # All stacked leading "NN - " layers are stripped, then the
+        # canonical "01 - " is prepended exactly once.
+        assert os.path.basename(result.dest_file) == "01 - Introduction.mp3"
+
+    def test_filename_stem_fallback_strips_triple_stacked_prefix(self, tmp_path):
+        """Three stacked prefixes (from three bad runs) must also heal (#10)."""
+        dest = str(tmp_path)
+        result = build_dest(
+            filepath="/src/01 - 01 - 01 - Introduction.mp3",
+            metadata=_meta(author="A", book="B", track="1"),
+            infer_path=("", ""),
+            infer_file=("", ""),
+            dest_dir=dest,
+        )
+        assert os.path.basename(result.dest_file) == "01 - Introduction.mp3"
+
+    def test_filename_stem_fallback_strips_multidisc_prefix(self, tmp_path):
+        """DNN-TNN - prefixes must also be stripped from the stem fallback (#10)."""
+        dest = str(tmp_path)
+        result = build_dest(
+            filepath="/src/D02-T03 - Chapter Three.mp3",
+            metadata=_meta(author="A", book="B", track="3", disc="2"),
+            infer_path=("", ""),
+            infer_file=("", ""),
+            dest_dir=dest,
+        )
+        assert os.path.basename(result.dest_file) == "D02-T03 - Chapter Three.mp3"
+
+    def test_title_tag_overrides_stem_stripping(self, tmp_path):
+        """When a title tag exists, the stem-stripping logic is not used at all."""
+        dest = str(tmp_path)
+        result = build_dest(
+            filepath="/src/01 - bogus.mp3",
+            metadata=_meta(author="A", book="B", title="Real Title", track="1"),
+            infer_path=("", ""),
+            infer_file=("", ""),
+            dest_dir=dest,
+        )
+        assert os.path.basename(result.dest_file) == "01 - Real Title.mp3"

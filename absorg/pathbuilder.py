@@ -14,6 +14,15 @@ from absorg.constants import (
 )
 from absorg.metadata import MetadataResult
 
+# Matches one or more leading "NN - " / "DNN-TNN - " prefixes that are
+# the signature of previous absorg runs on the same file. Used to strip
+# them from the filename stem when falling back to it as the title, so
+# re-running over an already-organised tree is idempotent instead of
+# stacking another prefix on top. The ``+`` at the outer level is
+# load-bearing: it heals multi-layered damage where a file has already
+# been through two or more bad runs (e.g. ``01 - 01 - Introduction``).
+_TRACK_PREFIX_RE = re.compile(r"^(?:(?:D\d{2}-T\d{2}|\d{2})\s*-\s*)+")
+
 
 def sanitise(name: str) -> str:
     """Make a string safe for filesystem paths using Unicode lookalike replacements.
@@ -113,7 +122,16 @@ def build_dest(
         else:
             prefix = ""
 
-        st = sanitise(metadata.title or os.path.splitext(filename)[0])
+        if metadata.title:
+            st = sanitise(metadata.title)
+        else:
+            # Fall back to the filename stem. Strip a leading "NN - " or
+            # "DNN-TNN - " that is the signature of a previous absorg run,
+            # so re-running over an already-organised tree is idempotent
+            # instead of stacking another prefix on top (issue #10).
+            stem = os.path.splitext(filename)[0]
+            stem = _TRACK_PREFIX_RE.sub("", stem)
+            st = sanitise(stem)
 
         dest_filename = f"{prefix} - {st}.{ext_lower}" if prefix else f"{st}.{ext_lower}"
 

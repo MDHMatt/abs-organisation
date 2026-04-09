@@ -28,6 +28,20 @@ from absorg.inference import infer_from_filename, infer_from_path
 from absorg.metadata import MetadataResult, resolve_metadata
 from absorg.normalise import normalise_author, normalise_book
 
+# Path segments that indicate a "placeholder" / dumping-ground directory
+# rather than a properly-organised Author/Book folder. When a book-dedup
+# tiebreak falls back to path structure, editions under these segments
+# are penalised so correctly-organised folders win over scratch dirs.
+# Compared lowercase against individual path segments.
+_PLACEHOLDER_SEGMENTS: frozenset[str] = frozenset({
+    "_unknown author",
+    "_unknown",
+    "unknown",
+    "unknown author",
+    "audiobooks",
+    "classics & general fiction",
+})
+
 
 @dataclass
 class BookEdition:
@@ -71,6 +85,70 @@ def score_edition(edition: BookEdition) -> tuple[int, int, int, float]:
     format_score = FORMAT_PREFERENCE.get(edition.format, 0)
     year_score = int(edition.year) if edition.year.isdigit() else 0
     return (format_score, year_score, edition.avg_bitrate, edition.total_duration)
+
+
+def _tiebreak_key(edition: BookEdition, source_dir: str) -> tuple[int, int, int, int, str]:
+    """Ascending-sort key to break ties between equally-scored editions.
+
+    This key is designed for an **ascending** sort (``sorted(..., reverse=False)``)
+    where **lower = better**, so it slots cleanly into a two-phase stable
+    sort: phase 1 orders by this tiebreak (ascending), phase 2 stable-sorts
+    by ``score_edition`` (descending). Ties in score preserve the phase-1
+    ordering.
+
+    Components, in priority order (all "lower is better"):
+
+    1. **Root-loose penalty.** ``0`` if the edition lives in a proper
+       sub-directory under *source_dir*, ``1`` if it is a loose file
+       directly at the source root. Loose files at the root always lose
+       ties to organised folders.
+    2. **Placeholder segment count.** Number of path segments matching a
+       known dumping-ground name (``_Unknown Author``, ``Unknown``,
+       ``Audiobooks``, etc.). Zero is best.
+    3. **Author-match penalty.** ``0`` if any path segment normalises to
+       the edition's tagged author name, ``1`` otherwise. Rewards folders
+       whose filesystem path already agrees with the audio tags.
+    4. **Depth penalty** (negated). ``-depth`` where depth is the number
+       of relative path segments under *source_dir*. Deeper = more
+       specifically organised = preferred, and negation flips it to
+       "lower is better".
+    5. **Alphabetical source_dir** as a final deterministic fallback.
+       Alphabetically earlier wins, which means correctly-spelled folders
+       beat typos (``Tchaikovsky`` < ``Tchikovski`` → Tchaikovsky wins).
+
+    See fixes.md Issue 12 for the full motivation and the three classes
+    of bad pick this replaces.
+    """
+    path = edition.source_dir
+    abs_path = os.path.normpath(os.path.abspath(path))
+    abs_source = os.path.normpath(os.path.abspath(source_dir))
+
+    # For loose files at the source root, inventory stores the full file
+    # path as source_dir (see build_book_inventory ~line 134), so the
+    # "directory" is actually a file whose parent is source_dir itself.
+    if os.path.isfile(abs_path):
+        parent = os.path.dirname(abs_path)
+        is_root_loose = 1 if os.path.normpath(parent) == abs_source else 0
+        rel = os.path.relpath(abs_path, abs_source) if abs_path.startswith(abs_source) else abs_path
+    else:
+        is_root_loose = 0
+        rel = os.path.relpath(abs_path, abs_source) if abs_path.startswith(abs_source) else abs_path
+
+    segments = [s for s in rel.split(os.sep) if s and s != "."]
+
+    placeholder_hits = sum(1 for s in segments if s.lower() in _PLACEHOLDER_SEGMENTS)
+
+    norm_author = normalise_author(edition.author or "")
+    author_mismatch = 1
+    if norm_author:
+        for s in segments:
+            if normalise_author(s) == norm_author:
+                author_mismatch = 0
+                break
+
+    depth = len(segments)
+
+    return (is_root_loose, placeholder_hits, author_mismatch, -depth, path)
 
 
 def _edition_summary(edition: BookEdition) -> str:
@@ -216,8 +294,19 @@ def build_book_inventory(
 
 def resolve_book_duplicates(
     groups: dict[tuple[str, str], BookGroup],
+    source_dir: str = "",
 ) -> tuple[set[str], list[BookDedupDecision]]:
     """For each group with 2+ editions, keep the best and quarantine the rest.
+
+    Parameters
+    ----------
+    groups:
+        Book groups produced by :func:`build_book_inventory`.
+    source_dir:
+        The library source root. Used by the structural tiebreaker to
+        compute path depth and detect root-level loose files. May be left
+        empty in tests that construct ``BookEdition`` objects directly; in
+        that case the tiebreak falls back to alphabetical ``source_dir``.
 
     Returns
     -------
@@ -231,12 +320,14 @@ def resolve_book_duplicates(
     decisions: list[BookDedupDecision] = []
 
     for _key, group in sorted(groups.items()):
-        # Sort editions by score descending; ties broken by source_dir for determinism.
-        ranked = sorted(
-            group.editions,
-            key=lambda e: (score_edition(e), e.source_dir),
-            reverse=True,
-        )
+        # Two-phase stable sort so we can mix sort directions:
+        #   Phase 1 — ascending by _tiebreak_key (lower = better)
+        #   Phase 2 — descending by score_edition (higher = better), stable
+        # Stability guarantees that editions with equal score_edition
+        # values retain the phase-1 tiebreak order. See fixes.md Issue 12
+        # for why this replaces the old single-sort reverse=True key.
+        tb_sorted = sorted(group.editions, key=lambda e: _tiebreak_key(e, source_dir))
+        ranked = sorted(tb_sorted, key=score_edition, reverse=True)
         kept = ranked[0]
         losers = ranked[1:]
 
@@ -256,7 +347,17 @@ def resolve_book_duplicates(
             elif kept_score[1] > loser_score[1] and kept.year:
                 reasons.append(f"has year metadata ({kept.year})")
             if kept_score[2] > loser_score[2]:
-                reasons.append(f"higher bitrate ({kept.avg_bitrate // 1000}kbps vs {loser.avg_bitrate // 1000}kbps)")
+                # Suppress the reason when the display would round to the
+                # same kbps value on both sides (fixes.md Issue 13). The
+                # score comparison is on true bps, so sub-kbps wins are
+                # valid but would render as "62kbps vs 62kbps" which is
+                # user-hostile log noise. With the structural tiebreak in
+                # place, sub-kbps ties are already broken by path quality
+                # anyway, so skipping the reason here loses no information.
+                kept_kbps = kept.avg_bitrate // 1000
+                loser_kbps = loser.avg_bitrate // 1000
+                if kept_kbps != loser_kbps:
+                    reasons.append(f"higher bitrate ({kept_kbps}kbps vs {loser_kbps}kbps)")
 
         book_display = f'"{kept.book}"' if kept.book else "(unknown book)"
         if kept.author:
