@@ -21,7 +21,7 @@ from absorg.dedup import DedupAction, DedupTracker, precompute_fingerprints, qua
 from absorg.inference import infer_from_filename, infer_from_path
 from absorg.logger import AbsorgLogger
 from absorg.metadata import MetadataResult, resolve_metadata
-from absorg.pathbuilder import build_dest, sanitise
+from absorg.pathbuilder import DestResult, build_dest, sanitise
 
 
 @dataclass
@@ -202,21 +202,18 @@ def _log_book_dedup_decisions(
         log.log()
 
 
-def _process_file(
+def _resolve_metadata_and_dest(
     filepath: str,
     args: argparse.Namespace,
-    tracker: DedupTracker,
-    counters: Counters,
     log: AbsorgLogger,
     *,
     metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None,
     show_quality: bool = False,
-) -> None:
-    """Process a single audio file: resolve metadata, dedup, move/skip."""
-    # ─── Stage 1: metadata ────────────────────────────────────────────────
-    # Reuse cached metadata from the book-dedup pre-pass when available;
-    # otherwise read tags now. Audio info is only computed when --show-quality
-    # is enabled.
+) -> DestResult | None:
+    """Resolve metadata + inference, build destination, log details.
+
+    Returns ``None`` when the file is already in place (caller should skip).
+    """
     abs_path = os.path.abspath(filepath)
     audio_info: AudioInfo | None = None
 
@@ -230,23 +227,29 @@ def _process_file(
     ip = infer_from_path(filepath, args.source)
     ifn = infer_from_filename(os.path.basename(filepath))
 
-    # ─── Stage 2: destination ─────────────────────────────────────────────
-    # Combine tags + path inference + filename inference into a final dest.
     dest = build_dest(filepath, meta, ip, ifn, args.dest)
 
     # Already-in-place check — short-circuit before logging anything noisy.
     if os.path.normpath(os.path.abspath(filepath)) == os.path.normpath(os.path.abspath(dest.dest_file)):
         log.logd(f"  SKIP (already in place): {os.path.basename(filepath)}")
-        counters.skipped += 1
-        return
+        return None
 
-    # Log metadata
     _log_file_metadata(
         filepath, meta, dest.dest_file, dest.no_meta, log,
         audio_info=audio_info if show_quality else None,
     )
+    return dest
 
-    # ─── Stage 3: dedup decision ──────────────────────────────────────────
+
+def _apply_dedup_and_move(
+    filepath: str,
+    dest: DestResult,
+    args: argparse.Namespace,
+    tracker: DedupTracker,
+    counters: Counters,
+    log: AbsorgLogger,
+) -> None:
+    """Check dedup, claim destination, and move (or dry-run) the file."""
     # tracker.check() compares fingerprints against both in-run claimed
     # destinations and pre-existing files at the target path.
     dedup_result = tracker.check(filepath, dest.dest_file)
@@ -272,11 +275,8 @@ def _process_file(
         counters.conflict += 1
         log.logy(f"  CONFLICT: renaming to {dest_file}")
 
-    # ─── Stage 4: claim the destination ───────────────────────────────────
     # tracker.register() MUST run before the dry-run guard so that later
     # files in the same run see this dest as claimed and route around it.
-    # Without this, two source files mapping to the same dest would both
-    # report "would move" in dry-run mode and silently collide on apply.
     tracker.register(dest_file, filepath)
 
     if args.dry_run:
@@ -285,7 +285,6 @@ def _process_file(
         log.log()
         return
 
-    # ─── Stage 5: live move ───────────────────────────────────────────────
     try:
         os.makedirs(dest_dir, exist_ok=True)
         shutil.move(filepath, dest_file)
@@ -293,7 +292,6 @@ def _process_file(
         counters.moved += 1
         if dest.no_meta:
             counters.no_meta += 1
-        # Cover extraction — only on live moves
         if not args.no_cover and extract_cover(dest_file, dest_dir, log):
             counters.cover += 1
     except OSError as exc:
@@ -303,90 +301,151 @@ def _process_file(
     log.log()
 
 
+def _process_file(
+    filepath: str,
+    args: argparse.Namespace,
+    tracker: DedupTracker,
+    counters: Counters,
+    log: AbsorgLogger,
+    *,
+    metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None,
+    show_quality: bool = False,
+) -> None:
+    """Process a single audio file: resolve metadata, dedup, move/skip."""
+    dest = _resolve_metadata_and_dest(
+        filepath, args, log, metadata_cache=metadata_cache, show_quality=show_quality,
+    )
+    if dest is None:
+        counters.skipped += 1
+        return
+    _apply_dedup_and_move(filepath, dest, args, tracker, counters, log)
+
+
+def _discover_and_fingerprint(
+    args: argparse.Namespace,
+    log: AbsorgLogger,
+    workers: int,
+) -> tuple[list[str], DedupTracker, Counters] | None:
+    """Discover audio files and pre-compute fingerprints.
+
+    Returns ``None`` when the source is missing or empty (caller should exit).
+    """
+    if not os.path.isdir(args.source):
+        log.logr(f"ERROR: source not found: {args.source}")
+        sys.exit(1)
+
+    files = _discover_audio_files(args.source)
+    total = len(files)
+    log.log(f"Found {log.bold(total)} audio file(s)")
+
+    if total == 0:
+        log.log()
+        return None
+
+    log.log(f"Pre-computing fingerprints ({workers} workers)...")
+    fp_cache = precompute_fingerprints(files, max_workers=workers)
+    log.log(f"  {len(fp_cache)} fingerprints cached")
+
+    return files, DedupTracker(fingerprint_cache=fp_cache), Counters()
+
+
+def _run_book_dedup_pass(
+    files: list[str],
+    args: argparse.Namespace,
+    counters: Counters,
+    log: AbsorgLogger,
+    workers: int,
+) -> tuple[dict[str, tuple[MetadataResult, AudioInfo]] | None, set[str]]:
+    """Run optional book-level dedup and return (metadata_cache, quarantine_files)."""
+    metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None
+    quarantine_files: set[str] = set()
+
+    if not getattr(args, "book_dedup", False):
+        return metadata_cache, quarantine_files
+
+    log.log()
+    log.log(log.bold(f"Scanning for book-level duplicates ({workers} workers)..."))
+    groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
+    if groups:
+        quarantine_files, decisions = resolve_book_duplicates(groups, args.source)
+        counters.book_dedup_groups = len(decisions)
+        _log_book_dedup_decisions(decisions, log)
+    else:
+        log.log("  No book-level duplicates found.")
+
+    return metadata_cache, quarantine_files
+
+
+def _iterate_files(
+    files: list[str],
+    args: argparse.Namespace,
+    tracker: DedupTracker,
+    counters: Counters,
+    log: AbsorgLogger,
+    *,
+    metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None,
+    quarantine_files: set[str] | None = None,
+    show_quality: bool = False,
+) -> None:
+    """Process each file sequentially (DedupTracker has ordering dependencies)."""
+    total = len(files)
+    qf = quarantine_files or set()
+
+    for n, filepath in enumerate(files, 1):
+        log.log()
+        log.log(f"{log.bold(f'[{n}/{total}]')}")
+        try:
+            if qf:
+                file_key = os.path.normpath(os.path.abspath(filepath))
+                if file_key in qf:
+                    log.logc(f"  FILE     : {filepath}")
+                    quarantine(filepath, args.dupes, args.source,
+                               args.dry_run, "BOOK_DEDUP: inferior edition", log)
+                    counters.book_dedup += 1
+                    log.log()
+                    continue
+
+            _process_file(
+                filepath, args, tracker, counters, log,
+                metadata_cache=metadata_cache,
+                show_quality=show_quality,
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            try:
+                log.logr(f"  ERROR processing {filepath}: {exc}")
+            except Exception:
+                log.logr(f"  ERROR processing file: {type(exc).__name__}: {exc}")
+            counters.failed += 1
+            log.log()
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point for the absorg CLI."""
     args = parse_args(argv)
-
     log = AbsorgLogger(args.log)
 
     try:
         workers = args.workers or min(os.cpu_count() or 4, 16)
-
         _print_header(args, log, workers)
 
-        # Validate source
-        if not os.path.isdir(args.source):
-            log.logr(f"ERROR: source not found: {args.source}")
-            sys.exit(1)
-
-        # ─── Phase 1: discover ────────────────────────────────────────────
-        files = _discover_audio_files(args.source)
-        total = len(files)
-        log.log(f"Found {log.bold(total)} audio file(s)")
-
-        if total == 0:
-            log.log()
+        result = _discover_and_fingerprint(args, log, workers)
+        if result is None:
             return
+        files, tracker, counters = result
 
-        # ─── Phase 2: fingerprint pre-compute (parallel I/O) ──────────────
-        log.log(f"Pre-computing fingerprints ({workers} workers)...")
-        fp_cache = precompute_fingerprints(files, max_workers=workers)
-        log.log(f"  {len(fp_cache)} fingerprints cached")
+        metadata_cache, quarantine_files = _run_book_dedup_pass(
+            files, args, counters, log, workers,
+        )
 
-        tracker = DedupTracker(fingerprint_cache=fp_cache)
-        counters = Counters()
+        _iterate_files(
+            files, args, tracker, counters, log,
+            metadata_cache=metadata_cache,
+            quarantine_files=quarantine_files,
+            show_quality=getattr(args, "show_quality", False),
+        )
 
-        # ─── Phase 3: book-dedup (optional, two-pass mode) ────────────────
-        metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None
-        quarantine_files: set[str] = set()
-
-        if getattr(args, "book_dedup", False):
-            log.log()
-            log.log(log.bold(f"Scanning for book-level duplicates ({workers} workers)..."))
-            groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
-            if groups:
-                quarantine_files, decisions = resolve_book_duplicates(groups, args.source)
-                counters.book_dedup_groups = len(decisions)
-                _log_book_dedup_decisions(decisions, log)
-            else:
-                log.log("  No book-level duplicates found.")
-
-        show_quality = getattr(args, "show_quality", False)
-
-        # ─── Phase 4: per-file processing (sequential) ────────────────────
-        # Sequential because DedupTracker has ordering dependencies on
-        # claimed destinations within the run.
-        for n, filepath in enumerate(files, 1):
-            log.log()
-            log.log(f"{log.bold(f'[{n}/{total}]')}")
-            try:
-                # Book-dedup quarantine check
-                if quarantine_files:
-                    file_key = os.path.normpath(os.path.abspath(filepath))
-                    if file_key in quarantine_files:
-                        log.logc(f"  FILE     : {filepath}")
-                        quarantine(filepath, args.dupes, args.source,
-                                   args.dry_run, "BOOK_DEDUP: inferior edition", log)
-                        counters.book_dedup += 1
-                        log.log()
-                        continue
-
-                _process_file(
-                    filepath, args, tracker, counters, log,
-                    metadata_cache=metadata_cache,
-                    show_quality=show_quality,
-                )
-            except KeyboardInterrupt:
-                raise
-            except Exception as exc:
-                try:
-                    log.logr(f"  ERROR processing {filepath}: {exc}")
-                except Exception:
-                    log.logr(f"  ERROR processing file: {type(exc).__name__}: {exc}")
-                counters.failed += 1
-                log.log()
-
-        # ─── Phase 5: summary ─────────────────────────────────────────────
         _print_summary(counters, args.dry_run, args.dupes, log)
 
     except KeyboardInterrupt:

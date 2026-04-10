@@ -1,4 +1,4 @@
-"""Shared constants for absorg.
+"""Shared constants and small utility functions for absorg.
 
 Grouped roughly by purpose:
 
@@ -16,12 +16,30 @@ Grouped roughly by purpose:
   cleanly under NFKD (German ß, Nordic ø/æ, etc.).
 """
 
+import re
+
+_LEADING_DIGITS_RE = re.compile(r"^\s*(\d+)")
+
+
+def parse_int(value: str) -> str:
+    """Extract leading digits from a string like ``'3'``, ``'03'``, ``'3/12'``.
+
+    Returns the matched digit string, or ``''`` if none found.
+    """
+    if not value:
+        return ""
+    m = _LEADING_DIGITS_RE.match(value)
+    return m.group(1) if m else ""
+
+
+# File extensions recognised by the discovery walk in cli._discover_audio_files().
 AUDIO_EXTENSIONS = frozenset({
     "mp3", "m4a", "m4b", "m4p", "flac", "ogg", "opus",
     "aac", "wav", "wma", "mp4", "aiff", "ape",
 })
 
-# Format preference for book-level dedup (higher = preferred).
+# Scoring table for book-level dedup (bookdedup.py). Higher = preferred when
+# two editions of the same book exist in different formats.
 FORMAT_PREFERENCE: dict[str, int] = {
     "m4b": 4,
     "m4a": 3,
@@ -38,7 +56,9 @@ FORMAT_PREFERENCE: dict[str, int] = {
     "m4p": 3,
 }
 
-# Characters that don't decompose via NFKD but need transliteration for normalisation.
+# Characters that don't decompose via NFKD but need transliteration for
+# normalise._strip_accents(). German ß, Nordic ø/æ, etc. have no base+combining
+# decomposition, so they need an explicit mapping.
 TRANSLITERATE_MAP: dict[int, str] = {
     ord("ø"): "o", ord("Ø"): "O",
     ord("æ"): "ae", ord("Æ"): "AE",
@@ -49,13 +69,22 @@ TRANSLITERATE_MAP: dict[int, str] = {
     ord("ß"): "ss",
 }
 
-# Regex patterns for normalisation.
+# Strips role qualifiers like "- introductions", "- narrator" from author names
+# in normalise.normalise_author(). Anchored to [^,;]* so it stops at the next
+# separator rather than eating subsequent author names (Issue 15).
 ROLE_QUALIFIERS_RE = r"\s*[-\u2013\u2014]\s*(?:introductions?|narrator|translator|foreword|adaptation|editor)s?\b[^,;]*"
+
+# Strips Audible catalog IDs like "[B0743JTTWQ]" from book titles in
+# normalise.normalise_book().
 AUDIBLE_ID_RE = r"\s*\[[A-Z0-9]{10,}\]"
 
+# Fallback names used by pathbuilder.build_dest() when metadata yields nothing.
+# Leading underscore sorts them to the top of the library for easy triage.
 UNKNOWN_AUTHOR = "_Unknown Author"
 UNKNOWN_BOOK = "_Unknown Book"
 
+# Truncation limit for each path component (author, series, book) in
+# pathbuilder.sanitise(). Keeps total path under Windows MAX_PATH with headroom.
 PATH_COMPONENT_MAX_LENGTH = 180
 
 # Character replacements for filesystem-safe paths.

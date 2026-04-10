@@ -11,6 +11,7 @@ from absorg.constants import (
     SANITISE_MAP,
     UNKNOWN_AUTHOR,
     UNKNOWN_BOOK,
+    parse_int,
 )
 from absorg.metadata import MetadataResult
 
@@ -38,15 +39,9 @@ def sanitise(name: str) -> str:
     return s[:PATH_COMPONENT_MAX_LENGTH]
 
 
-def parse_int(s: str) -> str:
-    """Extract the leading integer from strings like '3', '03', '3/12'.
 
-    Returns the matched digit string, or empty string if none found.
-    """
-    if not s:
-        return ""
-    m = re.match(r"^(\d+)", s)
-    return m.group(1) if m else ""
+# parse_int is re-exported from constants for backward compatibility.
+# Tests and external code import it from this module.
 
 
 @dataclass

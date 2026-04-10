@@ -26,7 +26,6 @@ rather than ``isinstance`` asserts because pyright infers
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any, cast
 
@@ -37,6 +36,7 @@ import mutagen.mp4
 from mutagen._vorbis import VComment
 
 from absorg.constants import METADATA_TAG_CHAINS
+from absorg.constants import parse_int as _parse_int
 
 if TYPE_CHECKING:
     from mutagen._file import FileType
@@ -46,14 +46,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_LEADING_DIGITS_RE = re.compile(r"^\s*(\d+)")
-
-
-def _parse_int(value: str) -> str:
-    """Extract leading digits from a string like '3/12' or '  7 '. Returns '' on failure."""
-    m = _LEADING_DIGITS_RE.match(value)
-    return m.group(1) if m else ""
 
 
 # ---------------------------------------------------------------------------

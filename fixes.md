@@ -57,37 +57,23 @@ Alternative (less invasive): widen the `fingerprint()` window. Sampling a small 
 
 ## Deferred refactors (non-blocking tech debt)
 
-### 5. Duplicate `parse_int` helper between `metadata.py` and `pathbuilder.py`
-
-[absorg/metadata.py:32-35](absorg/metadata.py#L32) defines `_parse_int()` and [absorg/pathbuilder.py:32-40](absorg/pathbuilder.py#L32) defines `parse_int()`. Both extract leading digits from a string. Extract to a single helper in a new `absorg/util.py` module (or move into `constants.py` / `normalise.py` if a new file feels heavy). Non-urgent — neither copy is buggy. Deferred because it is a refactor crossing two modules and changing public-ish API, which is out of scope for a docs-only pass.
-
-### 6. Test-file module docstrings
-
-None of the files under `tests/` have top-of-file docstrings other than `tests/test_cli.py`. Adding one-line module docstrings to each `tests/test_*.py` would be mechanical and harmless. Deferred because the user scoped the doc pass to `absorg/`.
-
-### 7. `constants.py` per-constant doc comments
-
-The Part 2a doc pass expanded the `absorg/constants.py` module docstring to group constants by purpose. A fuller pass would add a comment above each individual constant explaining its semantics, e.g.:
-
-```python
-PATH_COMPONENT_MAX_LENGTH = 180  # keep under Windows MAX_PATH minus headroom
-```
-
-Deferred — the module docstring already covers the grouping, and this would be churn for marginal benefit.
-
-### 8. `_process_file()` and `main()` length in `absorg/cli.py`
-
-Both functions are ~90 lines after the Part 2 inline-comment additions. A future split into helpers like `_resolve_and_log_metadata()`, `_apply_dedup_decision()`, `_discover_and_fingerprint()`, `_run_book_dedup_pass()`, `_iterate_files()` would improve readability. Explicitly out of scope for the doc pass — that pass only permitted comments, not refactors. Revisit after the v2.4.x series settles.
-
-### 9. One-line public docstrings to NumPy/Google format
-
-Most public functions across `absorg/` have informative one-line docstrings. Rewriting them to a full `Parameters / Returns / Raises` format would be churn for marginal benefit and would bloat the files. Deferred indefinitely unless a downstream tool (e.g. Sphinx) requires it.
+*No open items.* All tech debt from Issues 5-9 has been resolved or closed.
 
 ---
 
 ## Resolved issues
 
 Issues below have been fixed. They are kept here for historical context.
+
+**Issue 5** (v2.3.3): Duplicate `parse_int` helper — `metadata.py` and `pathbuilder.py` each defined their own copy. Consolidated into `constants.py` (already imported by both modules). `pathbuilder.py` re-exports for backward compatibility.
+
+**Issue 6** (v2.3.3): Test-file module docstrings — all `tests/test_*.py` files already had module docstrings. Moot.
+
+**Issue 7** (v2.3.3): `constants.py` per-constant doc comments — added inline comments above every constant explaining its purpose and which module(s) consume it.
+
+**Issue 8** (v2.3.3): `_process_file()` and `main()` length in `cli.py` — extracted five helpers: `_resolve_metadata_and_dest()`, `_apply_dedup_and_move()`, `_discover_and_fingerprint()`, `_run_book_dedup_pass()`, `_iterate_files()`. `_process_file()` is now 6 lines; `main()` is ~20 lines.
+
+**Issue 9**: One-line docstrings to NumPy/Google format — closed, not worth the churn. Existing one-line docstrings are informative and sufficient. Revisit only if Sphinx or similar tooling is adopted.
 
 **Issue 10** (v2.3.2, `f64b1ad`): `build_dest()` prefix-doubling — filenames like `22 - 22 - Chapter.mp3` caused by double-stacked track prefixes. Fixed by stripping existing numeric prefixes from the filename stem before re-prefixing.
 
