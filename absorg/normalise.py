@@ -65,6 +65,8 @@ def normalise_book(name: str) -> str:
     s = re.sub(AUDIBLE_ID_RE, "", s, flags=re.IGNORECASE)
     # Strip numeric IDs like [1338589016]
     s = re.sub(r"\s*\[\d{10,}\]", "", s)
+    # Strip parenthetical annotations like "(Unabridged)", "(read by X)"
+    s = re.sub(r"\s*\([^)]*\)", "", s)
 
     # Subtitle vs. volume-marker decision:
     # A title like "Good Omens: The Nice and Accurate Prophecies" has a
@@ -91,8 +93,10 @@ def normalise_book(name: str) -> str:
                 vol_marker = after_sep[vol_match.start():].split()[0:2]  # marker word + its number/label
                 vol_text = " ".join(vol_marker) if len(vol_marker) >= 2 else after_sep[vol_match.start():]
                 s = before_sep + " " + vol_text
-            elif len(before_sep) >= 3:
+            elif len(before_sep) >= 3 and not before_sep.isdigit():
                 # No volume marker — it's a decorative subtitle, drop it.
+                # Guard: purely numeric prefixes (e.g. years "1982") must
+                # not swallow the real title after " - ".
                 s = before_sep
                 break
 

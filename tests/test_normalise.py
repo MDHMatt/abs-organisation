@@ -55,6 +55,11 @@ class TestNormaliseAuthor:
     def test_endash_qualifier(self):
         assert normalise_author("Author \u2013 introductions") == normalise_author("Author")
 
+    def test_qualifier_mid_string_semicolon(self):
+        """Role qualifier before semicolon must not eat subsequent authors."""
+        assert normalise_author("Stephen Fry - introductions; Arthur Conan Doyle") == \
+               normalise_author("Arthur Conan Doyle, Stephen Fry")
+
     def test_preserves_distinct_authors(self):
         """Different authors should not normalise to the same key."""
         assert normalise_author("Stephen King") != normalise_author("Dean Koontz")
@@ -148,3 +153,28 @@ class TestNormaliseBook:
         # A real subtitle before the series info
         assert normalise_book("Good Omens: The Nice and Accurate Prophecies Series 1") == \
                normalise_book("Good Omens Series 1")
+
+    def test_year_prefix_not_conflated(self):
+        """Year-prefixed books with different titles must NOT conflate."""
+        assert normalise_book("1982 - The Gunslinger") != \
+               normalise_book("1982 - Different Seasons")
+
+    def test_year_prefix_same_book_matches(self):
+        """Same year-prefixed book with parenthetical should still match."""
+        # Real data: "(DT1 - revised edition - read by George Guidall)"
+        # Parenthetical is stripped first, leaving "1982 - The Gunslinger"
+        assert normalise_book("1982 - The Gunslinger (DT1 - revised edition)") == \
+               normalise_book("1982 - The Gunslinger")
+
+    def test_unabridged_stripped(self):
+        """'(Unabridged)' annotation should be stripped for grouping."""
+        assert normalise_book("Unruly (Unabridged)") == normalise_book("Unruly")
+
+    def test_parenthetical_narrator_stripped(self):
+        """Parenthetical narrator/edition info should be stripped."""
+        assert normalise_book("Dune (read by someone)") == normalise_book("Dune")
+
+    def test_parenthetical_with_subtitle(self):
+        """Parenthetical stripped before subtitle handling."""
+        assert normalise_book("Fairy Tale (Unabridged)") == \
+               normalise_book("Fairy Tale")

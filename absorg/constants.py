@@ -50,7 +50,7 @@ TRANSLITERATE_MAP: dict[int, str] = {
 }
 
 # Regex patterns for normalisation.
-ROLE_QUALIFIERS_RE = r"\s*[-\u2013\u2014]\s*(?:introductions?|narrator|translator|foreword|adaptation|editor)s?\b.*"
+ROLE_QUALIFIERS_RE = r"\s*[-\u2013\u2014]\s*(?:introductions?|narrator|translator|foreword|adaptation|editor)s?\b[^,;]*"
 AUDIBLE_ID_RE = r"\s*\[[A-Z0-9]{10,}\]"
 
 UNKNOWN_AUTHOR = "_Unknown Author"
