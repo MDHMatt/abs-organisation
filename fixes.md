@@ -40,6 +40,48 @@ Three plain triple-backtick fences are used for directory tree and flow-diagram 
 
 **Verify (all CLAUDE.md fixes):** `npx --yes markdownlint-cli@0.48.0 CLAUDE.md` should exit 0.
 
+## Mutagen ID3 frame imports — future compatibility
+
+**Issue:** ID3 frame classes (`TALB`, `TIT2`, `TPE2`, `TRCK`, `TCON`, etc.) are located in the private `mutagen.id3._frames` submodule in mutagen ≥1.47. Importing directly from `mutagen.id3` (the public API) is deprecated and may fail in future versions.
+
+**Common frames used in `absorg`:**
+- `TALB` — album/book title
+- `TIT2` — song/track title  
+- `TPE1` — artist/author
+- `TPE2` — album artist
+- `TRCK` — track number
+- `TCON` — content type (genre)
+- `TDRC` — date recorded
+- `APIC` — attached picture (cover art)
+
+**Fix — two approaches:**
+
+1. **Direct import from `_frames`** (required for newer mutagen):
+   ```python
+   from mutagen.id3._frames import TALB, TIT2, TPE1, TPE2, TRCK, TCON, TDRC, APIC
+   ```
+
+2. **High-level tag API** (recommended for robustness; works across versions):
+   ```python
+   from mutagen.id3 import ID3
+   tag = ID3(file_path)
+   tag['TALB'] = mutagen.id3.TALB(text=['Album Title'])
+   tag['TIT2'] = mutagen.id3.TIT2(text=['Track Title'])
+   # Frame creation via string key is stable across versions
+   ```
+
+**Recommendation:** Refactor test fixtures in [tests/conftest.py](tests/conftest.py) and any tag-writing code to use the high-level API (approach 2) wherever possible. This shields the codebase from mutagen's private API churn. If direct frame instantiation is necessary, fall back to the `_frames` import (approach 1) but wrap it in a version check or try/except for forward compatibility:
+
+```python
+try:
+    from mutagen.id3._frames import TALB
+except ImportError:
+    # future mutagen version with different private structure
+    from mutagen.id3 import TALB
+```
+
+**Status:** Not urgent if tests are currently passing, but should be addressed before upgrading mutagen beyond 1.47. Mark for v2.4.x or later.
+
 ## Deferred refactors (non-blocking tech debt)
 
 ### 5. Duplicate `parse_int` helper between `metadata.py` and `pathbuilder.py`
