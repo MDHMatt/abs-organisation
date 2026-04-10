@@ -4,42 +4,6 @@ This file tracks work that has been intentionally left out of the main task scop
 
 **Maintenance rule:** when an item here is fixed, delete it. When a new deferred item is identified, add it with the same level of detail as the existing entries.
 
-## Markdown lint errors in tracked files
-
-`CLAUDE.md` was authored against an older interpretation of the `.markdownlint.json` config and now fails several rules under `markdownlint-cli@0.48.0`. Notably, the config sets `"MD060": { "style": "compact" }` but `compact` is not a valid value for MD060 — markdownlint silently falls back to `consistent`, which then complains that the table separator rows do not match the header rows for pipe spacing. The cleanest path is to either (a) change the separator rows to use spaces, matching the header rows, or (b) change `MD060` to `"leading_and_trailing"` in `.markdownlint.json` and accept that as the project policy.
-
-### 1. `CLAUDE.md` MD060 — separator rows do not match header spacing
-
-**Affected lines:** [CLAUDE.md:12](CLAUDE.md#L12), [CLAUDE.md:57](CLAUDE.md#L57), [CLAUDE.md:171](CLAUDE.md#L171).
-
-Each of these is a table separator row using `|---|---|---|` while its header row uses spaced cells like `| Layer | Tool |`. Fix one of two ways.
-
-**Option A — pad the separator rows.** Change every `|---|---|---|` to `| --- | --- | --- |` (with the appropriate column count). This is a per-file fix and matches the README.md style introduced in this task.
-
-**Option B — change the project policy.** Edit `.markdownlint.json` to set `"MD060": { "style": "leading_and_trailing" }` (the actual valid style name). Then keep the existing CLAUDE.md tables as-is *only if* you also strip the spaces from the header rows so both styles match. This is a global decision and affects future PRs, so should not be applied silently.
-
-Recommended: **Option A**, since it is local to the docs that already exist and matches what README.md now does.
-
-### 2. `CLAUDE.md:70`, `CLAUDE.md:101`, `CLAUDE.md:183` MD040 — fenced code blocks missing language
-
-Three plain triple-backtick fences are used for directory tree and flow-diagram listings without a language hint. Add `text` (the conventional choice for tree-like ASCII output) immediately after the opening fence on each of those three lines, e.g. change ` ``` ` to ` ```text `. The closing fence stays as plain triple-backticks.
-
-### 3. `CLAUDE.md:145` MD009 — trailing whitespace
-
-**Affected line:** [CLAUDE.md:145](CLAUDE.md#L145). The line reading `` `normalise.py` produces canonical grouping keys for dedup. `` has a single trailing space after the period. Fix: strip the trailing whitespace.
-
-### 4. `CLAUDE.md:150` MD032 — list not preceded by blank line
-
-**Affected lines:** [CLAUDE.md:149-150](CLAUDE.md#L149). Between L149 (which ends with `For example:`) and L150 (`- "Alan Partridge Series 1" ...`) there is no blank line before the bulleted list. Insert a blank line so the list is preceded by a blank line.
-
-```markdown
-...preserves volume/series markers** (Series, Part, Act, Volume, Book, etc.) that distinguish different works. For example:
-
-- "Alan Partridge Series 1" and "Alan Partridge Series 2" normalize to different keys
-```
-
-**Verify (all CLAUDE.md fixes):** `npx --yes markdownlint-cli@0.48.0 CLAUDE.md` should exit 0.
-
 ## Mutagen ID3 frame imports — future compatibility
 
 **Issue:** ID3 frame classes (`TALB`, `TIT2`, `TPE2`, `TRCK`, `TCON`, etc.) are located in the private `mutagen.id3._frames` submodule in mutagen ≥1.47. Importing directly from `mutagen.id3` (the public API) is deprecated and may fail in future versions.
