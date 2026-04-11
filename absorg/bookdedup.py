@@ -17,6 +17,7 @@ Pass 2 (Resolution):
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -74,6 +75,17 @@ class BookDedupDecision:
     book_display: str          # e.g. '"Good Omens" by Neil Gaiman'
     kept: BookEdition
     quarantined: list[BookEdition]
+    reason: str
+
+
+@dataclass
+class IntraEditionDedupDecision:
+    """Record of an intra-edition dedup decision for logging."""
+
+    book_display: str
+    source_dir: str
+    kept: str                  # file path kept
+    quarantined: list[str]     # file paths quarantined
     reason: str
 
 
@@ -179,7 +191,7 @@ def build_book_inventory(
 
     Returns
     -------
-    groups : dict mapping norm_key → BookGroup (only groups with 2+ editions)
+    groups : dict mapping norm_key → BookGroup (all groups, including single-edition)
     metadata_cache : dict mapping abs_filepath → (MetadataResult, AudioInfo)
     """
     source_dir = os.path.normpath(os.path.abspath(source_dir))
@@ -286,10 +298,7 @@ def build_book_inventory(
             all_groups[key] = BookGroup(norm_key=key)
         all_groups[key].editions.append(edition)
 
-    # Only return groups with 2+ editions (these are the duplicates).
-    multi_groups = {k: v for k, v in all_groups.items() if len(v.editions) >= 2}
-
-    return multi_groups, metadata_cache
+    return dict(all_groups), metadata_cache
 
 
 def resolve_book_duplicates(
@@ -369,5 +378,155 @@ def resolve_book_duplicates(
             quarantined=losers,
             reason="; ".join(reasons) if reasons else "higher overall score",
         ))
+
+    return quarantine_files, decisions
+
+
+# ---------------------------------------------------------------------------
+# Intra-edition dedup (Issue 11)
+# ---------------------------------------------------------------------------
+
+# Matches a numeric suffix like ".2" in "Book.2.m4b" — the lookahead ensures
+# there is still a real file extension after the suffix.
+_NUMERIC_SUFFIX_RE = re.compile(r"\.\d+(?=\.[^.]+$)")
+
+
+def _recalculate_edition_stats(
+    edition: BookEdition,
+    removed: set[str],
+    metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]],
+) -> None:
+    """Recalculate edition stats after removing intra-edition duplicates."""
+    kept_files = [
+        f for f in edition.files
+        if os.path.normpath(os.path.abspath(f)) not in removed
+    ]
+    if not kept_files:
+        return  # safety: never empty an edition
+
+    edition.files = kept_files
+    total_bitrate = 0
+    total_duration = 0.0
+    total_size = 0
+    for fpath in kept_files:
+        entry = metadata_cache.get(fpath)
+        ai = entry[1] if entry else AudioInfo()
+        total_bitrate += ai.bitrate
+        total_duration += ai.duration
+        total_size += os.path.getsize(fpath) if os.path.exists(fpath) else 0
+
+    edition.file_count = len(kept_files)
+    edition.total_duration = total_duration
+    edition.avg_bitrate = total_bitrate // len(kept_files) if kept_files else 0
+    edition.total_size = total_size
+
+
+def resolve_intra_edition_duplicates(
+    all_groups: dict[tuple[str, str], BookGroup],
+    metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]],
+    *,
+    duration_tolerance: float = 1.0,
+) -> tuple[set[str], list[IntraEditionDedupDecision]]:
+    """Detect and quarantine duplicate files within a single edition.
+
+    Files within the same edition that share the same extension and have
+    durations within *duration_tolerance* seconds are treated as identical
+    audio copies (differing only in container metadata like moov atom
+    padding).  A cluster is only processed when at least one file carries
+    a ``.N`` numeric suffix — this prevents false positives on legitimate
+    multi-chapter editions where several files happen to share a duration.
+
+    Returns
+    -------
+    quarantine_files : set of normalised absolute file paths to quarantine.
+    decisions : list of IntraEditionDedupDecision records for logging.
+    """
+    quarantine_files: set[str] = set()
+    decisions: list[IntraEditionDedupDecision] = []
+
+    for group in all_groups.values():
+        for edition in group.editions:
+            if edition.file_count <= 1:
+                continue
+
+            # Group files by extension
+            by_ext: dict[str, list[str]] = defaultdict(list)
+            for fpath in edition.files:
+                ext = os.path.splitext(fpath)[1].lstrip(".").lower()
+                by_ext[ext].append(fpath)
+
+            for _ext, ext_files in by_ext.items():
+                if len(ext_files) <= 1:
+                    continue
+
+                # Collect (path, duration) pairs, excluding zero-duration files
+                file_durations: list[tuple[str, float]] = []
+                for fpath in ext_files:
+                    entry = metadata_cache.get(fpath)
+                    dur = entry[1].duration if entry else 0.0
+                    if dur > 0:
+                        file_durations.append((fpath, dur))
+
+                if len(file_durations) <= 1:
+                    continue
+
+                # Sort by duration for clustering
+                file_durations.sort(key=lambda x: x[1])
+
+                # Cluster: files within tolerance of the cluster's first element
+                clusters: list[list[str]] = []
+                cluster_start_dur = file_durations[0][1]
+                current: list[str] = [file_durations[0][0]]
+
+                for fpath, dur in file_durations[1:]:
+                    if dur - cluster_start_dur <= duration_tolerance:
+                        current.append(fpath)
+                    else:
+                        if len(current) > 1:
+                            clusters.append(current)
+                        current = [fpath]
+                        cluster_start_dur = dur
+
+                if len(current) > 1:
+                    clusters.append(current)
+
+                # Process each cluster
+                for cluster in clusters:
+                    # Safety: require at least one .N suffix file as evidence
+                    has_suffix = any(
+                        _NUMERIC_SUFFIX_RE.search(os.path.basename(f))
+                        for f in cluster
+                    )
+                    if not has_suffix:
+                        continue
+
+                    # Pick keeper: prefer no .N suffix, then shortest name, then alphabetical
+                    def _sort_key(fpath: str) -> tuple[int, int, str]:
+                        bn = os.path.basename(fpath)
+                        sfx = 1 if _NUMERIC_SUFFIX_RE.search(bn) else 0
+                        return (sfx, len(bn), bn)
+
+                    cluster.sort(key=_sort_key)
+                    kept = cluster[0]
+                    dupes = cluster[1:]
+
+                    for dupe in dupes:
+                        quarantine_files.add(os.path.normpath(os.path.abspath(dupe)))
+
+                    book_display = f'"{edition.book}"' if edition.book else "(unknown book)"
+                    if edition.author:
+                        book_display += f" by {edition.author}"
+
+                    decisions.append(IntraEditionDedupDecision(
+                        book_display=book_display,
+                        source_dir=edition.source_dir,
+                        kept=kept,
+                        quarantined=dupes,
+                        reason=f"same duration, same format, {len(dupes)} duplicate cop{'y' if len(dupes) == 1 else 'ies'}",
+                    ))
+
+            # Fix edition stats after removing duplicates
+            if quarantine_files:
+                _recalculate_edition_stats(edition, quarantine_files, metadata_cache)
 
     return quarantine_files, decisions

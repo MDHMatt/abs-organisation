@@ -19,39 +19,7 @@ Log files on Holly: `/mnt/user/Media/Music/absorg_dryrun.log` (v2.3.2 run), `/mn
 
 ## Runtime correctness issues
 
-### 11. Within-directory duplicate `.N.m4b` / `.N.mp3` files are invisible to book-dedup
-
-**Severity:** medium. Does not damage data but wastes disk and produces ever-incrementing suffix rings on repeat runs.
-
-**Affected code:** [absorg/bookdedup.py:145-201](absorg/bookdedup.py#L145) (inventory building), in conjunction with [absorg/dedup.py:16-22](absorg/dedup.py#L16) (fingerprint function).
-
-**Symptom from the dry run log (entries `[8/3482]` and `[9/3482]`):**
-
-```text
-FILE     : /source/Adrian Newey/How to Build a Car/How to Build a Car.2.m4b
-Quality  : AAC 62kbps 22.05kHz stereo, 12h27m08s
--->        /dest/Adrian Newey/How to Build a Car/How to Build a Car.m4b
-CONFLICT: renaming to /dest/Adrian Newey/How to Build a Car/How to Build a Car.3.m4b
-
-FILE     : /source/Adrian Newey/How to Build a Car/How to Build a Car.4.m4b
-Quality  : AAC 62kbps 22.05kHz stereo, 12h27m08s
--->        /dest/Adrian Newey/How to Build a Car/How to Build a Car.m4b
-CONFLICT: renaming to /dest/Adrian Newey/How to Build a Car/How to Build a Car.5.m4b
-```
-
-Five files (`.m4b`, `.2.m4b`, `.3.m4b`, `.4.m4b`, `.5.m4b`), all same author, same book, same duration `12h27m08s`, same bitrate. Every run bumps the suffixes up by two because each file computes the base filename `How to Build a Car.m4b` as its target and then conflict-renames to the next free `.N.m4b`. Similar pattern for Patrick Stewart *Making It So*, Andy Weir *Project Hail Mary*, Andrea Mara *No One Saw a Thing*, and many more.
-
-**Count:** 370 files in the library match `\.[0-9]+\.(mp3|m4b)$` (`grep -cE "FILE     :.*\.[0-9]+\.[a-z0-9]+$" absorg_dryrun.log`).
-
-**Root cause — why file-level dedup doesn't catch them:** `fingerprint()` in [absorg/dedup.py:16-22](absorg/dedup.py#L16) is `"{size}:{md5(first 1 MB)}"`. For M4B/MP4 files, the `moov` atom (which contains all metadata) can land in the first MB and is padded differently after each absorg run (because mutagen rewrites tags during cover extraction). The first-1 MB MD5 therefore differs even when the underlying audio is identical, and the file is marked PROCEED rather than QUARANTINE.
-
-**Root cause — why book-dedup doesn't catch them either:** [absorg/bookdedup.py:145-201](absorg/bookdedup.py#L145) groups files by `(directory, normalised (author, book))`. All five `How to Build a Car.N.m4b` files live in the same directory and share the same (author, book), so they collapse into **one edition with `file_count=5`, `total_duration=62h15m40s` (5x12h27m08s)**. Book-dedup only fires when two or more *editions* exist for the same normalised key; a single edition holding multiple copies of the same book looks like a multi-part work to the inventory.
-
-**Fix direction:** add an intra-edition dedup pass during `build_book_inventory()`. For each edition, if multiple files share the same `(duration, bitrate, format)` up to a small tolerance (say +/-1 second on duration, exact on format), collapse to the file with the shortest basename (i.e. the one without a `.N` suffix), and emit the rest as quarantine targets under a new reason like `INTRA_DIR_DUPE: identical duration + format`. Add the quarantined paths to the same `quarantine_files` set that cross-edition dedup uses.
-
-Alternative (less invasive): widen the `fingerprint()` window. Sampling a small middle-of-file slice (e.g. 512 KB starting at file-size / 2) in addition to the first 1 MB would skip over the moov atom for most M4B files and capture actual audio frame bytes. This would let the existing file-level dedup catch the duplicates without any bookdedup changes. Downside: reads are no longer sequential, which is slower on spinning rust. Holly is on spinning rust, so measure before committing.
-
-**Deferred because:** now that Issues 10, 14, 15, and 16 are fixed, the conflict-rename suffix residue can be cleaned up in a one-off sweep rather than chased every run. Re-assess after the first clean `--move` run lands on Holly.
+*No open items.*
 
 ---
 
@@ -64,6 +32,8 @@ Alternative (less invasive): widen the `fingerprint()` window. Sampling a small 
 ## Resolved issues
 
 Issues below have been fixed. They are kept here for historical context.
+
+**Issue 11** (v2.3.5): Within-directory `.N.m4b` / `.N.mp3` duplicate copies invisible to both file-level and book-level dedup. 335 conflicts and 370 suffixed files. Root cause: file-level fingerprint hashes first 1MB (moov atom differs per run), and book-level dedup collapses all copies into one inflated edition. Fixed by adding `resolve_intra_edition_duplicates()` in `bookdedup.py` — groups files within each edition by `(extension, duration±1s)`, requires `.N` suffix evidence to avoid false positives on multi-chapter books, quarantines duplicates and corrects edition stats before cross-edition scoring.
 
 **Issue 5** (v2.3.3): Duplicate `parse_int` helper — `metadata.py` and `pathbuilder.py` each defined their own copy. Consolidated into `constants.py` (already imported by both modules). `pathbuilder.py` re-exports for backward compatibility.
 

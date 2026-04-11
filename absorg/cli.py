@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from absorg.audioinfo import AudioInfo, extract_audio_info, format_quality
 from absorg.bookdedup import (
     BookDedupDecision,
+    IntraEditionDedupDecision,
     _edition_summary,
     build_book_inventory,
     resolve_book_duplicates,
+    resolve_intra_edition_duplicates,
 )
 from absorg.constants import AUDIO_EXTENSIONS
 from absorg.cover import extract_cover
@@ -37,6 +39,7 @@ class Counters:
     conflict: int = 0
     book_dedup: int = 0          # files quarantined by book-level dedup
     book_dedup_groups: int = 0   # number of book groups resolved
+    intra_dedup: int = 0         # files quarantined by intra-edition dedup
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -166,6 +169,8 @@ def _print_summary(
         log.log(f"  Skipped       : {counters.skipped} (already in place)")
         log.log(f"  Duplicates    : {counters.dupe} (would quarantine to {dupes_dir})")
         log.log(f"  Conflicts     : {counters.conflict} (would rename with suffix)")
+        if counters.intra_dedup > 0:
+            log.log(f"  Intra dedup   : {counters.intra_dedup} duplicate files (would quarantine)")
         if counters.book_dedup_groups > 0:
             log.log(f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files (would quarantine)")
         log.logy("  Run with --move to apply.")
@@ -177,11 +182,13 @@ def _print_summary(
         log.log(f"  Duplicates    : {counters.dupe} quarantined")
         log.log(f"  Conflicts     : {counters.conflict} renamed")
         log.log(f"  Failed        : {counters.failed}")
+        if counters.intra_dedup > 0:
+            log.log(f"  Intra dedup   : {counters.intra_dedup} duplicate files quarantined")
         if counters.book_dedup_groups > 0:
             log.log(f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files quarantined")
         if counters.no_meta > 0:
             log.logy(f"  WARNING: {counters.no_meta} files had no metadata — inferred from path/filename")
-        if counters.dupe > 0 or counters.book_dedup > 0:
+        if counters.dupe > 0 or counters.book_dedup > 0 or counters.intra_dedup > 0:
             log.logy(f"  Review duplicates in {dupes_dir}")
 
 
@@ -198,6 +205,24 @@ def _log_book_dedup_decisions(
         log.logg(f"    KEEP:       {d.kept.source_dir} ({_edition_summary(d.kept)})")
         for q in d.quarantined:
             log.logm(f"    QUARANTINE: {q.source_dir} ({_edition_summary(q)})")
+        log.log(f"    Reason: {d.reason}")
+        log.log()
+
+
+def _log_intra_edition_dedup_decisions(
+    decisions: list[IntraEditionDedupDecision],
+    log: AbsorgLogger,
+) -> None:
+    """Log intra-edition dedup decisions."""
+    total_quarantined = sum(len(d.quarantined) for d in decisions)
+    log.log()
+    log.log(log.bold(f"INTRA-EDITION DEDUP: {total_quarantined} duplicate file(s) in {len(decisions)} edition(s)"))
+    log.log()
+    for d in decisions:
+        log.log(f"  {d.book_display} [{os.path.basename(d.source_dir)}]")
+        log.logg(f"    KEEP:       {os.path.basename(d.kept)}")
+        for q in d.quarantined:
+            log.logm(f"    QUARANTINE: {os.path.basename(q)}")
         log.log(f"    Reason: {d.reason}")
         log.log()
 
@@ -355,25 +380,34 @@ def _run_book_dedup_pass(
     counters: Counters,
     log: AbsorgLogger,
     workers: int,
-) -> tuple[dict[str, tuple[MetadataResult, AudioInfo]] | None, set[str]]:
-    """Run optional book-level dedup and return (metadata_cache, quarantine_files)."""
+) -> tuple[dict[str, tuple[MetadataResult, AudioInfo]] | None, set[str], set[str]]:
+    """Run optional book-level dedup and return (metadata_cache, intra_quarantine, cross_quarantine)."""
     metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None
-    quarantine_files: set[str] = set()
+    intra_quarantine: set[str] = set()
+    cross_quarantine: set[str] = set()
 
     if not getattr(args, "book_dedup", False):
-        return metadata_cache, quarantine_files
+        return metadata_cache, intra_quarantine, cross_quarantine
 
     log.log()
     log.log(log.bold(f"Scanning for book-level duplicates ({workers} workers)..."))
-    groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
-    if groups:
-        quarantine_files, decisions = resolve_book_duplicates(groups, args.source)
+    all_groups, metadata_cache = build_book_inventory(files, args.source, max_workers=workers)
+
+    # Phase 1: intra-edition dedup (remove .N suffix duplicates within editions)
+    intra_quarantine, intra_decisions = resolve_intra_edition_duplicates(all_groups, metadata_cache)
+    if intra_decisions:
+        _log_intra_edition_dedup_decisions(intra_decisions, log)
+
+    # Phase 2: cross-edition dedup (filter to multi-edition groups, score and keep best)
+    multi_groups = {k: v for k, v in all_groups.items() if len(v.editions) >= 2}
+    if multi_groups:
+        cross_quarantine, decisions = resolve_book_duplicates(multi_groups, args.source)
         counters.book_dedup_groups = len(decisions)
         _log_book_dedup_decisions(decisions, log)
-    else:
+    elif not intra_decisions:
         log.log("  No book-level duplicates found.")
 
-    return metadata_cache, quarantine_files
+    return metadata_cache, intra_quarantine, cross_quarantine
 
 
 def _iterate_files(
@@ -384,26 +418,38 @@ def _iterate_files(
     log: AbsorgLogger,
     *,
     metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] | None = None,
+    intra_quarantine_files: set[str] | None = None,
     quarantine_files: set[str] | None = None,
     show_quality: bool = False,
 ) -> None:
     """Process each file sequentially (DedupTracker has ordering dependencies)."""
     total = len(files)
+    iqf = intra_quarantine_files or set()
     qf = quarantine_files or set()
 
     for n, filepath in enumerate(files, 1):
         log.log()
         log.log(f"{log.bold(f'[{n}/{total}]')}")
         try:
-            if qf:
-                file_key = os.path.normpath(os.path.abspath(filepath))
-                if file_key in qf:
-                    log.logc(f"  FILE     : {filepath}")
-                    quarantine(filepath, args.dupes, args.source,
-                               args.dry_run, "BOOK_DEDUP: inferior edition", log)
-                    counters.book_dedup += 1
-                    log.log()
-                    continue
+            file_key = os.path.normpath(os.path.abspath(filepath))
+
+            # Intra-edition dedup quarantine (duplicate copies within same edition)
+            if file_key in iqf:
+                log.logc(f"  FILE     : {filepath}")
+                quarantine(filepath, args.dupes, args.source,
+                           args.dry_run, "INTRA_DEDUP: duplicate copy in same edition", log)
+                counters.intra_dedup += 1
+                log.log()
+                continue
+
+            # Cross-edition dedup quarantine (inferior edition of same book)
+            if file_key in qf:
+                log.logc(f"  FILE     : {filepath}")
+                quarantine(filepath, args.dupes, args.source,
+                           args.dry_run, "BOOK_DEDUP: inferior edition", log)
+                counters.book_dedup += 1
+                log.log()
+                continue
 
             _process_file(
                 filepath, args, tracker, counters, log,
@@ -435,14 +481,15 @@ def main(argv: list[str] | None = None) -> None:
             return
         files, tracker, counters = result
 
-        metadata_cache, quarantine_files = _run_book_dedup_pass(
+        metadata_cache, intra_quarantine, cross_quarantine = _run_book_dedup_pass(
             files, args, counters, log, workers,
         )
 
         _iterate_files(
             files, args, tracker, counters, log,
             metadata_cache=metadata_cache,
-            quarantine_files=quarantine_files,
+            intra_quarantine_files=intra_quarantine,
+            quarantine_files=cross_quarantine,
             show_quality=getattr(args, "show_quality", False),
         )
 

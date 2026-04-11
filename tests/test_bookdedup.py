@@ -2,13 +2,16 @@
 
 import os
 
+from absorg.audioinfo import AudioInfo
 from absorg.bookdedup import (
     BookEdition,
     BookGroup,
     build_book_inventory,
     resolve_book_duplicates,
+    resolve_intra_edition_duplicates,
     score_edition,
 )
+from absorg.metadata import MetadataResult
 
 
 class TestScoreEdition:
@@ -359,11 +362,11 @@ class TestBuildBookInventory:
         files = _discover_audio_files(str(source))
         groups, cache = build_book_inventory(files, str(source))
 
-        # No groups with 2+ editions (each file is its own edition with different inferred book name)
-        assert len(groups) == 0
+        # Each file is its own edition (different inferred book name), no multi-edition groups
+        assert all(len(g.editions) == 1 for g in groups.values())
 
-    def test_single_edition_not_in_groups(self, tmp_path):
-        """A book with only one edition should not appear in the groups dict."""
+    def test_single_edition_has_one_edition(self, tmp_path):
+        """A book with only one edition should appear as a single-edition group."""
         source = tmp_path / "source"
         d = source / "Author" / "Book"
         d.mkdir(parents=True)
@@ -376,7 +379,8 @@ class TestBuildBookInventory:
         files = _discover_audio_files(str(source))
         groups, cache = build_book_inventory(files, str(source))
 
-        assert len(groups) == 0
+        assert len(groups) == 1
+        assert len(list(groups.values())[0].editions) == 1
 
     def test_multi_book_container_splits_into_sub_editions(self, tmp_path):
         """A directory holding files with different album tags becomes multiple editions."""
@@ -391,8 +395,8 @@ class TestBuildBookInventory:
         from absorg.cli import _discover_audio_files
         files = _discover_audio_files(str(source))
         groups, _cache = build_book_inventory(files, str(source))
-        # Each distinct book appears only once -> no duplicate groups yet.
-        assert len(groups) == 0
+        # Each distinct book appears only once -> three single-edition groups.
+        assert all(len(g.editions) == 1 for g in groups.values())
 
         # Add a standalone copy of Book Two; it should group with the container sub-edition.
         standalone = source / "Author" / "Book Two"
@@ -400,8 +404,10 @@ class TestBuildBookInventory:
         _make_mp3_helper(standalone)("only.mp3", album_artist="Author", album="Book Two")
         files = _discover_audio_files(str(source))
         groups, _cache = build_book_inventory(files, str(source))
-        assert len(groups) == 1
-        g = list(groups.values())[0]
+        # 3 groups total; only Book Two has 2 editions
+        multi = {k: v for k, v in groups.items() if len(v.editions) >= 2}
+        assert len(multi) == 1
+        g = list(multi.values())[0]
         assert len(g.editions) == 2
         for ed in g.editions:
             assert ed.file_count == 1
@@ -453,3 +459,122 @@ def _make_mp3_helper(directory):
             audio.save()
         return str(path)
     return _make
+
+
+class TestIntraEditionDedup:
+    """Tests for resolve_intra_edition_duplicates (Issue 11)."""
+
+    def _make_group(self, files_and_durations, author="Author", book="Book"):
+        """Build a BookGroup + metadata_cache from a list of (path, duration) pairs."""
+        metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]] = {}
+        file_paths = []
+        for fpath, dur in files_and_durations:
+            abs_path = os.path.abspath(fpath)
+            file_paths.append(abs_path)
+            metadata_cache[abs_path] = (
+                MetadataResult(author=author, book=book),
+                AudioInfo(duration=dur, bitrate=62000, codec="aac"),
+            )
+
+        edition = BookEdition(
+            source_dir=os.path.dirname(file_paths[0]) if file_paths else "/tmp",
+            files=file_paths,
+            author=author,
+            book=book,
+            format="m4b",
+            total_duration=sum(d for _, d in files_and_durations),
+            avg_bitrate=62000,
+            file_count=len(file_paths),
+        )
+        group = BookGroup(
+            norm_key=("author", "book"),
+            editions=[edition],
+        )
+        return {("author", "book"): group}, metadata_cache, edition
+
+    def test_detects_same_duration_same_ext(self, tmp_path):
+        """Files with matching duration and ext should be detected as duplicates."""
+        groups, cache, _ = self._make_group([
+            (str(tmp_path / "Book.m4b"), 44827.5),
+            (str(tmp_path / "Book.2.m4b"), 44827.5),
+            (str(tmp_path / "Book.3.m4b"), 44827.5),
+        ])
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert len(qf) == 2
+        assert len(decisions) == 1
+
+    def test_keeps_clean_name_over_suffixed(self, tmp_path):
+        """The file without .N suffix should be kept."""
+        clean = str(tmp_path / "Book.m4b")
+        suf2 = str(tmp_path / "Book.2.m4b")
+        suf3 = str(tmp_path / "Book.3.m4b")
+        groups, cache, _ = self._make_group([
+            (clean, 44827.5), (suf2, 44827.5), (suf3, 44827.5),
+        ])
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert _norm(clean) not in qf
+        assert _norm(suf2) in qf
+        assert _norm(suf3) in qf
+
+    def test_different_durations_not_grouped(self, tmp_path):
+        """Files with different durations should NOT be grouped."""
+        groups, cache, _ = self._make_group([
+            (str(tmp_path / "ch01.m4b"), 3600.0),
+            (str(tmp_path / "ch02.2.m4b"), 7200.0),
+            (str(tmp_path / "ch03.3.m4b"), 1800.0),
+        ])
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert len(qf) == 0
+
+    def test_different_extensions_not_grouped(self, tmp_path):
+        """Same duration but different extensions should NOT be grouped."""
+        cache: dict[str, tuple[MetadataResult, AudioInfo]] = {}
+        mp3 = os.path.abspath(str(tmp_path / "ch01.mp3"))
+        m4b = os.path.abspath(str(tmp_path / "book.2.m4b"))
+        cache[mp3] = (MetadataResult(author="A", book="B"), AudioInfo(duration=3600, bitrate=128000, codec="mp3"))
+        cache[m4b] = (MetadataResult(author="A", book="B"), AudioInfo(duration=3600, bitrate=62000, codec="aac"))
+        edition = BookEdition(
+            source_dir=str(tmp_path), files=[mp3, m4b], author="A", book="B",
+            format="m4b", total_duration=7200, avg_bitrate=95000, file_count=2,
+        )
+        groups = {("a", "b"): BookGroup(norm_key=("a", "b"), editions=[edition])}
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert len(qf) == 0
+
+    def test_single_file_edition(self, tmp_path):
+        """An edition with 1 file should produce no quarantine."""
+        groups, cache, _ = self._make_group([
+            (str(tmp_path / "Book.m4b"), 44827.5),
+        ])
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert len(qf) == 0
+        assert len(decisions) == 0
+
+    def test_edition_stats_corrected(self, tmp_path):
+        """After intra-dedup, edition stats should reflect only kept files."""
+        groups, cache, edition = self._make_group([
+            (str(tmp_path / "Book.m4b"), 44827.5),
+            (str(tmp_path / "Book.2.m4b"), 44827.5),
+            (str(tmp_path / "Book.3.m4b"), 44827.5),
+        ])
+        resolve_intra_edition_duplicates(groups, cache)
+        assert edition.file_count == 1
+        assert edition.total_duration == 44827.5
+
+    def test_no_suffix_evidence_skips_cluster(self, tmp_path):
+        """Files with matching duration but no .N suffix should NOT be quarantined."""
+        groups, cache, _ = self._make_group([
+            (str(tmp_path / "disc1.m4b"), 3600.0),
+            (str(tmp_path / "disc2.m4b"), 3600.0),
+        ])
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert len(qf) == 0
+
+    def test_zero_duration_skipped(self, tmp_path):
+        """Files with duration=0 should be excluded from clustering."""
+        groups, cache, _ = self._make_group([
+            (str(tmp_path / "Book.m4b"), 0.0),
+            (str(tmp_path / "Book.2.m4b"), 0.0),
+        ])
+        qf, decisions = resolve_intra_edition_duplicates(groups, cache)
+        assert len(qf) == 0
