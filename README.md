@@ -3,9 +3,10 @@
 Organise audiobook libraries for [Audiobookshelf](https://www.audiobookshelf.org/) by reading embedded metadata tags.
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)
-![Version](https://img.shields.io/badge/version-2.3.2-green)
+![Version](https://img.shields.io/badge/version-2.3.6-green)
 ![License](https://img.shields.io/badge/license-Unlicense-lightgrey)
 ![Docker](https://img.shields.io/badge/docker-mdhmatt%2Fabs--organiser-blue)
+[![CI](https://github.com/MDHMatt/abs-organisation/actions/workflows/ci.yml/badge.svg)](https://github.com/MDHMatt/abs-organisation/actions/workflows/ci.yml)
 
 `absorg` walks a source directory of audio files, reads their embedded metadata with [mutagen](https://mutagen.readthedocs.io/), and lays each file out under a structured `Author/[Series/[NN - ]]Book/[DD-TNN - ]Chapter.ext` hierarchy ready for Audiobookshelf to ingest. It deduplicates by content fingerprint, optionally collapses duplicate editions of the same book, and extracts embedded cover art on the way through. Dry-run mode is the default — every command is safe to try before any files move.
 
@@ -100,11 +101,12 @@ This is dry-run by default and surfaces the per-book scoring decisions in the lo
 
 ```bash
 pip install -e ".[dev]"        # editable + ruff + pytest
-pytest tests/ -v               # full test suite
-ruff check absorg/ tests/      # lint
+python scripts/check.py          # complete local gate
 ```
 
 Tests use a `make_mp3` fixture that synthesises minimal valid MPEG1 Layer3 frames plus optional ID3 tags via mutagen, so the suite has no external media dependency.
+
+The gate runs Ruff lint and formatting checks, Python syntax compilation, all tests, a package build, and Markdown linting. GitHub Actions runs it on every push and pull request, tests Python 3.11 (supported floor), 3.12 (Docker runtime), and 3.14 (current stable), and builds the Docker image. These automated checks cannot validate real audiobook metadata, NAS permissions, Unraid paths, or live move/quarantine behaviour; use the default dry run against the target library before every `--move` run.
 
 ## Project layout
 
@@ -121,7 +123,7 @@ absorg/
   cover.py          # Embedded cover art extraction
   logger.py         # Coloured TTY logging with file tee
   constants.py      # Extensions, tag chains, sanitise/transliterate maps
-tests/              # pytest suite (177 tests, no external media required)
+tests/              # pytest suite (202 tests, no external media required)
 ```
 
 For architecture, metadata resolution chains, and design decisions, see [CLAUDE.md](CLAUDE.md).
@@ -133,5 +135,6 @@ Released into the public domain under [The Unlicense](LICENSE). Do whatever you 
 ## See also
 
 - [CLAUDE.md](CLAUDE.md) — detailed architecture, metadata resolution chains, and design decisions
+- [CHANGELOG.md](CHANGELOG.md) — release history and pending changes
 - [Audiobookshelf](https://www.audiobookshelf.org/) — the self-hosted audiobook server this tool feeds
 - [mutagen](https://mutagen.readthedocs.io/) — the underlying tag-reading library

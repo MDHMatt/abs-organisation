@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class AudioInfo:
     """Stream-level properties of an audio file."""
 
-    bitrate: int = 0          # bits per second (e.g. 128000)
-    duration: float = 0.0     # seconds
-    codec: str = ""           # "mp3", "aac", "flac", "vorbis", "opus", "wma"
-    sample_rate: int = 0      # Hz (e.g. 44100)
-    channels: int = 0         # 1=mono, 2=stereo
+    bitrate: int = 0  # bits per second (e.g. 128000)
+    duration: float = 0.0  # seconds
+    codec: str = ""  # "mp3", "aac", "flac", "vorbis", "opus", "wma"
+    sample_rate: int = 0  # Hz (e.g. 44100)
+    channels: int = 0  # 1=mono, 2=stereo
 
 
 # Map mutagen info types to codec names.

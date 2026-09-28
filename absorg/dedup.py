@@ -119,10 +119,7 @@ def precompute_fingerprints(
     """
     cache: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(fingerprint, f): os.path.normpath(os.path.abspath(f))
-            for f in files
-        }
+        futures = {pool.submit(fingerprint, f): os.path.normpath(os.path.abspath(f)) for f in files}
         for future in as_completed(futures):
             norm_path = futures[future]
             # Files that fail will be computed on-demand in check()

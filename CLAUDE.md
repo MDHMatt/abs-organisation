@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Technology Stack
 
 | Layer | Tool |
-|---|---|
+| --- | --- |
 | Language | Python 3.11+ |
 | Metadata / cover art | [mutagen](https://mutagen.readthedocs.io/) (no ffmpeg needed) |
 | Container base | python:3.12-alpine |
@@ -31,7 +31,10 @@ absorg --source /path/to/unsorted --dest /path/to/library
 # Apply changes
 absorg --source /path/to/unsorted --dest /path/to/library --move
 
-# Run all tests
+# Run the complete repository gate
+python scripts/check.py
+
+# Run all tests only
 pytest tests/ -v
 
 # Run a single test file
@@ -54,7 +57,7 @@ docker-compose run --rm absorg --move       # apply
 ## CLI Flags
 
 | Flag | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `--move` | off | Actually move files (default is dry-run) |
 | `--source DIR` | `/audiobooks_unsorted` | Directory to scan recursively |
 | `--dest DIR` | `/audiobooks` | Library root to organise into |
@@ -67,7 +70,7 @@ docker-compose run --rm absorg --move       # apply
 
 ## Project Structure
 
-```
+```text
 absorg/
   __init__.py          # Package version
   __main__.py          # python -m absorg entry point
@@ -98,7 +101,7 @@ tests/
 
 ## Execution Flow
 
-```
+```text
 main()
   ├─ parse_args()
   ├─ AbsorgLogger(log_path)
@@ -142,11 +145,12 @@ Each field is resolved by trying a tag priority chain (defined in `constants.MET
 
 ### Author/Book Name Normalisation
 
-`normalise.py` produces canonical grouping keys for dedup. 
+`normalise.py` produces canonical grouping keys for dedup.
 
 **Author normalisation** handles: case folding, accent stripping (NFKD + transliteration), separator variants (`;` → `,`), name ordering (sorted), role qualifier removal (`- introductions`, `- translator`, etc.).
 
 **Book normalisation** handles: case folding, Audible ID stripping, subtitle removal, leading article removal, and **crucially, preserves volume/series markers** (Series, Part, Act, Volume, Book, etc.) that distinguish different works. For example:
+
 - "Alan Partridge Series 1" and "Alan Partridge Series 2" normalize to different keys
 - "Skulduggery Pleasant Books 1-3" and "Books 4-6" are kept distinct
 - "The Sandman Act I" and "Act II" remain separate
@@ -168,7 +172,7 @@ Both are I/O-bound (NAS reads), so threads are correct despite the GIL. The per-
 `sanitise()` replaces filesystem-illegal characters with Unicode lookalikes (defined in `constants.SANITISE_MAP`). Only the first leading dot is stripped (not `lstrip('.')`). Components are capped at 180 characters.
 
 | Char | Replacement | Codepoint |
-|---|---|---|
+| --- | --- | --- |
 | `/` `\` | `∕` | U+2215 |
 | `:` | `∶` | U+2236 |
 | `*` | `∗` | U+2217 |
@@ -180,7 +184,7 @@ Both are I/O-bound (NAS reads), so threads are correct despite the GIL. The per-
 
 ### Output Directory Structure
 
-```
+```text
 DEST/Author/[Series/[NN - ]]Book/[DD-TNN - ]Chapter.ext
 ```
 
@@ -197,7 +201,7 @@ DEST/Author/[Series/[NN - ]]Book/[DD-TNN - ]Chapter.ext
 
 ### Linting
 
-The project uses [ruff](https://github.com/astral-sh/ruff) for Python linting (configured in `pyproject.toml`) and [markdownlint](https://github.com/DavidAnson/markdownlint) for markdown style (configured in `.markdownlint.json`). The ruff configuration pins line-length to 120, targets Python 3.11+, and selects rules for error checking, formatting, and code simplification. Markdownlint enforces compact table separators (`|---|---|`) and asterisk bold (`**bold**`), matching the existing de facto project style.
+The project uses [ruff](https://github.com/astral-sh/ruff) for Python linting (configured in `pyproject.toml`) and [markdownlint](https://github.com/DavidAnson/markdownlint) for markdown style (configured in `.markdownlint.json`). The ruff configuration pins line-length to 120, targets Python 3.11+, and selects rules for error checking, formatting, and code simplification. Markdownlint enforces compact table separators (`|---|---|`) and asterisk bold (`**bold**`), matching the existing de facto project style. Run `python scripts/check.py` for the same complete gate used by CI.
 
 ## Testing
 

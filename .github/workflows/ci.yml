@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Checked 2026-09-28: 3.11 is the project floor, 3.12 is the
+        # Docker runtime, and 3.14 is the current stable Python release.
+        python-version: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Run tests
+        run: python -m pytest -q
+
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - uses: actions/setup-node@v7
+        with:
+          # Checked 2026-09-28: Node 24 is an active LTS release.
+          node-version: "24"
+          cache: npm
+      - name: Install development dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run complete gate
+        run: python scripts/check.py
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build --tag absorg:ci .
+      - name: Check entry point
+        run: docker run --rm absorg:ci --help
+
+  # CI cannot validate real audiobook metadata, NAS permissions, Unraid paths,
+  # or move/quarantine behaviour against a live library. Use a dry run on the
+  # target library before every live --move invocation.

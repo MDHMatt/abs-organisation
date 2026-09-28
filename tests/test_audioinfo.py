@@ -1,7 +1,5 @@
 """Tests for audio info extraction."""
 
-
-
 from absorg.audioinfo import AudioInfo, extract_audio_info, format_duration, format_quality
 
 
@@ -60,8 +58,7 @@ class TestFormatDuration:
 
 class TestFormatQuality:
     def test_full_info(self):
-        ai = AudioInfo(bitrate=128000, duration=3600, codec="mp3",
-                       sample_rate=44100, channels=2)
+        ai = AudioInfo(bitrate=128000, duration=3600, codec="mp3", sample_rate=44100, channels=2)
         result = format_quality(ai)
         assert "MP3" in result
         assert "128kbps" in result
@@ -70,8 +67,7 @@ class TestFormatQuality:
         assert "1h00m00s" in result
 
     def test_mono(self):
-        ai = AudioInfo(bitrate=64000, duration=60, codec="aac",
-                       sample_rate=22050, channels=1)
+        ai = AudioInfo(bitrate=64000, duration=60, codec="aac", sample_rate=22050, channels=1)
         result = format_quality(ai)
         assert "mono" in result
 

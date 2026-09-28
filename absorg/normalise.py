@@ -83,15 +83,15 @@ def normalise_book(name: str) -> str:
     for sep in (":", " - "):
         if sep in s:
             before_sep = s[: s.index(sep)].strip()
-            after_sep = s[s.index(sep) + len(sep):].strip()
+            after_sep = s[s.index(sep) + len(sep) :].strip()
 
             # Look for a volume marker within the after_sep text
             vol_match = re.search(volume_marker_pattern, after_sep, flags=re.IGNORECASE)
             if vol_match:
                 # Volume marker found — keep just the marker (e.g. "series 2")
                 # and append it to the base title so editions stay distinct.
-                vol_marker = after_sep[vol_match.start():].split()[0:2]  # marker word + its number/label
-                vol_text = " ".join(vol_marker) if len(vol_marker) >= 2 else after_sep[vol_match.start():]
+                vol_marker = after_sep[vol_match.start() :].split()[0:2]  # marker word + its number/label
+                vol_text = " ".join(vol_marker) if len(vol_marker) >= 2 else after_sep[vol_match.start() :]
                 s = before_sep + " " + vol_text
             elif len(before_sep) >= 3 and not before_sep.isdigit():
                 # No volume marker — it's a decorative subtitle, drop it.
@@ -103,7 +103,7 @@ def normalise_book(name: str) -> str:
     # Strip leading articles
     for article in ("the ", "a ", "an "):
         if s.startswith(article):
-            candidate = s[len(article):]
+            candidate = s[len(article) :]
             # Don't strip if result would be too short
             if len(candidate) >= 2:
                 s = candidate

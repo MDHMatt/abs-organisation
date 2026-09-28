@@ -12,6 +12,11 @@ venv/
 
 # Testing
 .pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+
+# Repository tooling
+node_modules/
 
 # Logs
 *.log

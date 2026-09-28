@@ -39,7 +39,6 @@ def sanitise(name: str) -> str:
     return s[:PATH_COMPONENT_MAX_LENGTH]
 
 
-
 # parse_int is re-exported from constants for backward compatibility.
 # Tests and external code import it from this module.
 
@@ -48,9 +47,9 @@ def sanitise(name: str) -> str:
 class DestResult:
     """Result of building a canonical destination path."""
 
-    dest_dir: str      # Directory portion (no trailing separator)
-    dest_file: str     # Full destination path including filename
-    no_meta: bool      # True if author OR book came from inference/fallback
+    dest_dir: str  # Directory portion (no trailing separator)
+    dest_file: str  # Full destination path including filename
+    no_meta: bool  # True if author OR book came from inference/fallback
 
 
 def build_dest(
