@@ -22,6 +22,7 @@ class AbsorgLogger:
         self.use_color = sys.stdout.isatty()
         # Log file is truncated at the start of each run (mode 'w'), not appended.
         import os
+
         os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
         self._file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
 

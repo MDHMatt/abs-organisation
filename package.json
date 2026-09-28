@@ -1,0 +1,15 @@
+{
+  "name": "absorg-repository-tools",
+  "version": "2.3.6",
+  "private": true,
+  "description": "Repository-only tooling for absorg",
+  "scripts": {
+    "lint:markdown": "markdownlint-cli2 \"**/*.md\" \"#node_modules\" \"#.venv\" \"#dist\""
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

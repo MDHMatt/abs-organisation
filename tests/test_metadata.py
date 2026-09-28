@@ -1,7 +1,5 @@
 """Tests for metadata extraction via mutagen."""
 
-
-
 from absorg.metadata import MetadataResult, get_tag, load_tags, resolve_metadata
 
 

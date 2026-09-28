@@ -34,14 +34,16 @@ from absorg.normalise import normalise_author, normalise_book
 # tiebreak falls back to path structure, editions under these segments
 # are penalised so correctly-organised folders win over scratch dirs.
 # Compared lowercase against individual path segments.
-_PLACEHOLDER_SEGMENTS: frozenset[str] = frozenset({
-    "_unknown author",
-    "_unknown",
-    "unknown",
-    "unknown author",
-    "audiobooks",
-    "classics & general fiction",
-})
+_PLACEHOLDER_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "_unknown author",
+        "_unknown",
+        "unknown",
+        "unknown author",
+        "audiobooks",
+        "classics & general fiction",
+    }
+)
 
 
 @dataclass
@@ -52,12 +54,12 @@ class BookEdition:
     files: list[str] = field(default_factory=list)
     author: str = ""
     book: str = ""
-    format: str = ""           # primary format: "m4b", "mp3", etc.
+    format: str = ""  # primary format: "m4b", "mp3", etc.
     year: str = ""
     total_duration: float = 0.0
     avg_bitrate: int = 0
     file_count: int = 0
-    total_size: int = 0        # bytes
+    total_size: int = 0  # bytes
 
 
 @dataclass
@@ -72,7 +74,7 @@ class BookGroup:
 class BookDedupDecision:
     """Record of a book-level dedup decision for logging."""
 
-    book_display: str          # e.g. '"Good Omens" by Neil Gaiman'
+    book_display: str  # e.g. '"Good Omens" by Neil Gaiman'
     kept: BookEdition
     quarantined: list[BookEdition]
     reason: str
@@ -84,8 +86,8 @@ class IntraEditionDedupDecision:
 
     book_display: str
     source_dir: str
-    kept: str                  # file path kept
-    quarantined: list[str]     # file paths quarantined
+    kept: str  # file path kept
+    quarantined: list[str]  # file paths quarantined
     reason: str
 
 
@@ -372,12 +374,14 @@ def resolve_book_duplicates(
         if kept.author:
             book_display += f" by {kept.author}"
 
-        decisions.append(BookDedupDecision(
-            book_display=book_display,
-            kept=kept,
-            quarantined=losers,
-            reason="; ".join(reasons) if reasons else "higher overall score",
-        ))
+        decisions.append(
+            BookDedupDecision(
+                book_display=book_display,
+                kept=kept,
+                quarantined=losers,
+                reason="; ".join(reasons) if reasons else "higher overall score",
+            )
+        )
 
     return quarantine_files, decisions
 
@@ -397,10 +401,7 @@ def _recalculate_edition_stats(
     metadata_cache: dict[str, tuple[MetadataResult, AudioInfo]],
 ) -> None:
     """Recalculate edition stats after removing intra-edition duplicates."""
-    kept_files = [
-        f for f in edition.files
-        if os.path.normpath(os.path.abspath(f)) not in removed
-    ]
+    kept_files = [f for f in edition.files if os.path.normpath(os.path.abspath(f)) not in removed]
     if not kept_files:
         return  # safety: never empty an edition
 
@@ -493,10 +494,7 @@ def resolve_intra_edition_duplicates(
                 # Process each cluster
                 for cluster in clusters:
                     # Safety: require at least one .N suffix file as evidence
-                    has_suffix = any(
-                        _NUMERIC_SUFFIX_RE.search(os.path.basename(f))
-                        for f in cluster
-                    )
+                    has_suffix = any(_NUMERIC_SUFFIX_RE.search(os.path.basename(f)) for f in cluster)
                     if not has_suffix:
                         continue
 
@@ -517,13 +515,15 @@ def resolve_intra_edition_duplicates(
                     if edition.author:
                         book_display += f" by {edition.author}"
 
-                    decisions.append(IntraEditionDedupDecision(
-                        book_display=book_display,
-                        source_dir=edition.source_dir,
-                        kept=kept,
-                        quarantined=dupes,
-                        reason=f"same duration, same format, {len(dupes)} duplicate cop{'y' if len(dupes) == 1 else 'ies'}",
-                    ))
+                    decisions.append(
+                        IntraEditionDedupDecision(
+                            book_display=book_display,
+                            source_dir=edition.source_dir,
+                            kept=kept,
+                            quarantined=dupes,
+                            reason=f"same duration, same format, {len(dupes)} duplicate cop{'y' if len(dupes) == 1 else 'ies'}",
+                        )
+                    )
 
             # Fix edition stats after removing duplicates
             if quarantine_files:

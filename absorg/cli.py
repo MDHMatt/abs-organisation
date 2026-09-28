@@ -37,9 +37,9 @@ class Counters:
     cover: int = 0
     dupe: int = 0
     conflict: int = 0
-    book_dedup: int = 0          # files quarantined by book-level dedup
-    book_dedup_groups: int = 0   # number of book groups resolved
-    intra_dedup: int = 0         # files quarantined by intra-edition dedup
+    book_dedup: int = 0  # files quarantined by book-level dedup
+    book_dedup_groups: int = 0  # number of book groups resolved
+    intra_dedup: int = 0  # files quarantined by intra-edition dedup
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -62,22 +62,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.set_defaults(dry_run=True)
 
-    parser.add_argument("--source", default="/audiobooks_unsorted",
-                        help="Source directory to scan recursively (default: /audiobooks_unsorted).")
-    parser.add_argument("--dest", default="/audiobooks",
-                        help="Destination library root (default: /audiobooks).")
-    parser.add_argument("--dupes", default="./audiobook_dupes",
-                        help="Quarantine directory for duplicates (default: ./audiobook_dupes).")
-    parser.add_argument("--log", default="./abs_organise.log",
-                        help="Log file path (default: ./abs_organise.log).")
-    parser.add_argument("--no-cover", dest="no_cover", action="store_true",
-                        help="Skip cover art extraction.")
-    parser.add_argument("--book-dedup", dest="book_dedup", action="store_true",
-                        help="Enable book-level deduplication (prefer M4B, prefer newer).")
-    parser.add_argument("--show-quality", dest="show_quality", action="store_true",
-                        help="Log audio quality info (bitrate, duration, codec) per file.")
-    parser.add_argument("--workers", type=int, default=0,
-                        help="Parallel workers for I/O (0=auto-detect, default: 0).")
+    parser.add_argument(
+        "--source",
+        default="/audiobooks_unsorted",
+        help="Source directory to scan recursively (default: /audiobooks_unsorted).",
+    )
+    parser.add_argument("--dest", default="/audiobooks", help="Destination library root (default: /audiobooks).")
+    parser.add_argument(
+        "--dupes", default="./audiobook_dupes", help="Quarantine directory for duplicates (default: ./audiobook_dupes)."
+    )
+    parser.add_argument("--log", default="./abs_organise.log", help="Log file path (default: ./abs_organise.log).")
+    parser.add_argument("--no-cover", dest="no_cover", action="store_true", help="Skip cover art extraction.")
+    parser.add_argument(
+        "--book-dedup",
+        dest="book_dedup",
+        action="store_true",
+        help="Enable book-level deduplication (prefer M4B, prefer newer).",
+    )
+    parser.add_argument(
+        "--show-quality",
+        dest="show_quality",
+        action="store_true",
+        help="Log audio quality info (bitrate, duration, codec) per file.",
+    )
+    parser.add_argument("--workers", type=int, default=0, help="Parallel workers for I/O (0=auto-detect, default: 0).")
 
     return parser.parse_args(argv)
 
@@ -172,7 +180,9 @@ def _print_summary(
         if counters.intra_dedup > 0:
             log.log(f"  Intra dedup   : {counters.intra_dedup} duplicate files (would quarantine)")
         if counters.book_dedup_groups > 0:
-            log.log(f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files (would quarantine)")
+            log.log(
+                f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files (would quarantine)"
+            )
         log.logy("  Run with --move to apply.")
     else:
         log.log(log.bold("Complete"))
@@ -185,7 +195,9 @@ def _print_summary(
         if counters.intra_dedup > 0:
             log.log(f"  Intra dedup   : {counters.intra_dedup} duplicate files quarantined")
         if counters.book_dedup_groups > 0:
-            log.log(f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files quarantined")
+            log.log(
+                f"  Book dedup    : {counters.book_dedup_groups} groups resolved, {counters.book_dedup} files quarantined"
+            )
         if counters.no_meta > 0:
             log.logy(f"  WARNING: {counters.no_meta} files had no metadata — inferred from path/filename")
         if counters.dupe > 0 or counters.book_dedup > 0 or counters.intra_dedup > 0:
@@ -260,7 +272,11 @@ def _resolve_metadata_and_dest(
         return None
 
     _log_file_metadata(
-        filepath, meta, dest.dest_file, dest.no_meta, log,
+        filepath,
+        meta,
+        dest.dest_file,
+        dest.no_meta,
+        log,
         audio_info=audio_info if show_quality else None,
     )
     return dest
@@ -338,7 +354,11 @@ def _process_file(
 ) -> None:
     """Process a single audio file: resolve metadata, dedup, move/skip."""
     dest = _resolve_metadata_and_dest(
-        filepath, args, log, metadata_cache=metadata_cache, show_quality=show_quality,
+        filepath,
+        args,
+        log,
+        metadata_cache=metadata_cache,
+        show_quality=show_quality,
     )
     if dest is None:
         counters.skipped += 1
@@ -436,8 +456,9 @@ def _iterate_files(
             # Intra-edition dedup quarantine (duplicate copies within same edition)
             if file_key in iqf:
                 log.logc(f"  FILE     : {filepath}")
-                quarantine(filepath, args.dupes, args.source,
-                           args.dry_run, "INTRA_DEDUP: duplicate copy in same edition", log)
+                quarantine(
+                    filepath, args.dupes, args.source, args.dry_run, "INTRA_DEDUP: duplicate copy in same edition", log
+                )
                 counters.intra_dedup += 1
                 log.log()
                 continue
@@ -445,14 +466,17 @@ def _iterate_files(
             # Cross-edition dedup quarantine (inferior edition of same book)
             if file_key in qf:
                 log.logc(f"  FILE     : {filepath}")
-                quarantine(filepath, args.dupes, args.source,
-                           args.dry_run, "BOOK_DEDUP: inferior edition", log)
+                quarantine(filepath, args.dupes, args.source, args.dry_run, "BOOK_DEDUP: inferior edition", log)
                 counters.book_dedup += 1
                 log.log()
                 continue
 
             _process_file(
-                filepath, args, tracker, counters, log,
+                filepath,
+                args,
+                tracker,
+                counters,
+                log,
                 metadata_cache=metadata_cache,
                 show_quality=show_quality,
             )
@@ -482,11 +506,19 @@ def main(argv: list[str] | None = None) -> None:
         files, tracker, counters = result
 
         metadata_cache, intra_quarantine, cross_quarantine = _run_book_dedup_pass(
-            files, args, counters, log, workers,
+            files,
+            args,
+            counters,
+            log,
+            workers,
         )
 
         _iterate_files(
-            files, args, tracker, counters, log,
+            files,
+            args,
+            tracker,
+            counters,
+            log,
             metadata_cache=metadata_cache,
             intra_quarantine_files=intra_quarantine,
             quarantine_files=cross_quarantine,

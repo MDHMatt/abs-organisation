@@ -126,12 +126,18 @@ class TestMainDryRun:
         audio.tags.add(TIT2(encoding=3, text=["Chapter 1"]))
         audio.save()
 
-        main([
-            "--source", str(source),
-            "--dest", str(dest),
-            "--dupes", str(tmp_path / "dupes"),
-            "--log", log_file,
-        ])
+        main(
+            [
+                "--source",
+                str(source),
+                "--dest",
+                str(dest),
+                "--dupes",
+                str(tmp_path / "dupes"),
+                "--log",
+                log_file,
+            ]
+        )
 
         # File should still be at source
         assert os.path.exists(mp3_path)
@@ -145,11 +151,16 @@ class TestMainDryRun:
     def test_missing_source_exits(self, tmp_path):
         """Should exit with code 1 if source doesn't exist."""
         with pytest.raises(SystemExit) as exc_info:
-            main([
-                "--source", str(tmp_path / "nonexistent"),
-                "--dest", str(tmp_path / "dest"),
-                "--log", str(tmp_path / "test.log"),
-            ])
+            main(
+                [
+                    "--source",
+                    str(tmp_path / "nonexistent"),
+                    "--dest",
+                    str(tmp_path / "dest"),
+                    "--log",
+                    str(tmp_path / "test.log"),
+                ]
+            )
         assert exc_info.value.code == 1
 
     def test_empty_source(self, tmp_path):
@@ -159,11 +170,16 @@ class TestMainDryRun:
         dest = tmp_path / "dest"
         dest.mkdir()
 
-        main([
-            "--source", str(source),
-            "--dest", str(dest),
-            "--log", str(tmp_path / "test.log"),
-        ])
+        main(
+            [
+                "--source",
+                str(source),
+                "--dest",
+                str(dest),
+                "--log",
+                str(tmp_path / "test.log"),
+            ]
+        )
         # Just verify it didn't crash
 
 
@@ -187,14 +203,20 @@ class TestMainLiveMove:
         audio.tags.add(TIT2(encoding=3, text=["Chapter 1"]))
         audio.save()
 
-        main([
-            "--move",
-            "--source", str(source),
-            "--dest", str(dest),
-            "--dupes", str(tmp_path / "dupes"),
-            "--log", str(tmp_path / "test.log"),
-            "--no-cover",
-        ])
+        main(
+            [
+                "--move",
+                "--source",
+                str(source),
+                "--dest",
+                str(dest),
+                "--dupes",
+                str(tmp_path / "dupes"),
+                "--log",
+                str(tmp_path / "test.log"),
+                "--no-cover",
+            ]
+        )
 
         # Source file should be gone
         assert not os.path.exists(mp3_path)
@@ -240,12 +262,14 @@ class TestBookDedup:
         _create_tagged_mp3(
             str(d1 / "ch01.mp3"),
             album_artist="Author A, Author B",
-            album="Good Book", title="Ch 1",
+            album="Good Book",
+            title="Ch 1",
         )
         _create_tagged_mp3(
             str(d1 / "ch02.mp3"),
             album_artist="Author A, Author B",
-            album="Good Book", title="Ch 2",
+            album="Good Book",
+            title="Ch 2",
         )
 
         # Edition 2: tagged with semicolon separator (should normalise to same key)
@@ -253,16 +277,25 @@ class TestBookDedup:
         _create_tagged_mp3(
             str(d2 / "ch01.mp3"),
             album_artist="Author A; Author B",
-            album="Good Book", title="Ch 1",
+            album="Good Book",
+            title="Ch 1",
         )
 
-        main([
-            "--move", "--book-dedup", "--no-cover",
-            "--source", str(source),
-            "--dest", str(dest),
-            "--dupes", str(dupes),
-            "--log", str(tmp_path / "test.log"),
-        ])
+        main(
+            [
+                "--move",
+                "--book-dedup",
+                "--no-cover",
+                "--source",
+                str(source),
+                "--dest",
+                str(dest),
+                "--dupes",
+                str(dupes),
+                "--log",
+                str(tmp_path / "test.log"),
+            ]
+        )
 
         # One edition should be in dest, the other in dupes
         dest_files = []
@@ -293,23 +326,32 @@ class TestBookDedup:
         _create_tagged_mp3(
             str(d1 / "ch01.mp3"),
             album_artist="Author A, Author B",
-            album="Good Book", title="Ch 1",
+            album="Good Book",
+            title="Ch 1",
         )
 
         d2 = source / "Author A; Author B" / "Good Book"
         _create_tagged_mp3(
             str(d2 / "ch01.mp3"),
             album_artist="Author A; Author B",
-            album="Good Book", title="Ch 1",
+            album="Good Book",
+            title="Ch 1",
         )
 
-        main([
-            "--move", "--no-cover",
-            "--source", str(source),
-            "--dest", str(dest),
-            "--dupes", str(dupes),
-            "--log", str(tmp_path / "test.log"),
-        ])
+        main(
+            [
+                "--move",
+                "--no-cover",
+                "--source",
+                str(source),
+                "--dest",
+                str(dest),
+                "--dupes",
+                str(dupes),
+                "--log",
+                str(tmp_path / "test.log"),
+            ]
+        )
 
         # Both files should end up somewhere (dest or dest with conflicts)
         dest_mp3s = []
@@ -336,17 +378,26 @@ class TestBookDedup:
         d = source / "Author" / "Book"
         _create_tagged_mp3(
             str(d / "ch01.mp3"),
-            album_artist="Author", album="Book", title="Ch 1",
+            album_artist="Author",
+            album="Book",
+            title="Ch 1",
         )
 
         log_file = str(tmp_path / "test.log")
-        main([
-            "--show-quality", "--no-cover",
-            "--source", str(source),
-            "--dest", str(dest),
-            "--dupes", str(tmp_path / "dupes"),
-            "--log", log_file,
-        ])
+        main(
+            [
+                "--show-quality",
+                "--no-cover",
+                "--source",
+                str(source),
+                "--dest",
+                str(dest),
+                "--dupes",
+                str(tmp_path / "dupes"),
+                "--log",
+                log_file,
+            ]
+        )
 
         with open(log_file) as f:
             log_content = f.read()

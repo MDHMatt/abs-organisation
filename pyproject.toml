@@ -1,6 +1,6 @@
 [project]
 name = "absorg"
-version = "2.3.5"
+version = "2.3.6"
 description = "Organise audiobook files for Audiobookshelf"
 requires-python = ">=3.11"
 dependencies = ["mutagen>=1.47"]
@@ -10,7 +10,7 @@ absorg = "absorg.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
-dev = ["pytest>=7.0", "ruff>=0.5"]
+dev = ["build>=1.6.1,<2", "pytest>=7.0", "ruff>=0.5", "setuptools>=68.0"]
 
 [tool.ruff]
 line-length = 120
@@ -22,6 +22,12 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B018"]
+
+[tool.pytest.ini_options]
+addopts = "--basetemp=.pytest-tmp -p no:cacheprovider"
+
+[tool.setuptools.packages.find]
+include = ["absorg*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

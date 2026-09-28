@@ -36,13 +36,15 @@ class TestExtractCover:
         audio = MP3(path)
         # Add a minimal JPEG-like cover
         fake_jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 100
-        audio.tags.add(APIC(
-            encoding=3,
-            mime="image/jpeg",
-            type=3,  # Cover (front)
-            desc="Cover",
-            data=fake_jpeg,
-        ))
+        audio.tags.add(
+            APIC(
+                encoding=3,
+                mime="image/jpeg",
+                type=3,  # Cover (front)
+                desc="Cover",
+                data=fake_jpeg,
+            )
+        )
         audio.save()
 
         dest = str(tmp_path / "output")
@@ -62,8 +64,9 @@ class TestExtractCover:
 
         path = make_mp3("art.mp3", artist="Test")
         audio = MP3(path)
-        audio.tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover",
-                            data=b"\xff\xd8\xff\xe0" + b"\x00" * 50))
+        audio.tags.add(
+            APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=b"\xff\xd8\xff\xe0" + b"\x00" * 50)
+        )
         audio.save()
 
         dest = str(tmp_path / "output")

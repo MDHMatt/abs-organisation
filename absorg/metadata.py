@@ -222,6 +222,7 @@ def _normalise_asf(file: FileType) -> dict[str, str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def load_tags(filepath: str) -> dict[str, str]:
     """Open *filepath* with mutagen and return a flat dict of lowercase tag keys to string values.
 
@@ -295,12 +296,12 @@ class MetadataResult:
     author: str = ""
     book: str = ""
     title: str = ""
-    track: str = ""          # digits only, or empty
-    disc: str = ""           # digits only, or empty
+    track: str = ""  # digits only, or empty
+    disc: str = ""  # digits only, or empty
     series: str = ""
-    series_index: str = ""   # digits only, or empty
+    series_index: str = ""  # digits only, or empty
     narrator: str = ""
-    year: str = ""           # first 4 chars, or empty
+    year: str = ""  # first 4 chars, or empty
     subtitle: str = ""
     genre: str = ""
 

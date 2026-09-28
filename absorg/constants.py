@@ -33,10 +33,23 @@ def parse_int(value: str) -> str:
 
 
 # File extensions recognised by the discovery walk in cli._discover_audio_files().
-AUDIO_EXTENSIONS = frozenset({
-    "mp3", "m4a", "m4b", "m4p", "flac", "ogg", "opus",
-    "aac", "wav", "wma", "mp4", "aiff", "ape",
-})
+AUDIO_EXTENSIONS = frozenset(
+    {
+        "mp3",
+        "m4a",
+        "m4b",
+        "m4p",
+        "flac",
+        "ogg",
+        "opus",
+        "aac",
+        "wav",
+        "wma",
+        "mp4",
+        "aiff",
+        "ape",
+    }
+)
 
 # Scoring table for book-level dedup (bookdedup.py). Higher = preferred when
 # two editions of the same book exist in different formats.
@@ -60,12 +73,18 @@ FORMAT_PREFERENCE: dict[str, int] = {
 # normalise._strip_accents(). German ß, Nordic ø/æ, etc. have no base+combining
 # decomposition, so they need an explicit mapping.
 TRANSLITERATE_MAP: dict[int, str] = {
-    ord("ø"): "o", ord("Ø"): "O",
-    ord("æ"): "ae", ord("Æ"): "AE",
-    ord("ð"): "d", ord("Ð"): "D",
-    ord("þ"): "th", ord("Þ"): "TH",
-    ord("ł"): "l", ord("Ł"): "L",
-    ord("đ"): "d", ord("Đ"): "D",
+    ord("ø"): "o",
+    ord("Ø"): "O",
+    ord("æ"): "ae",
+    ord("Æ"): "AE",
+    ord("ð"): "d",
+    ord("Ð"): "D",
+    ord("þ"): "th",
+    ord("Þ"): "TH",
+    ord("ł"): "l",
+    ord("Ł"): "L",
+    ord("đ"): "d",
+    ord("Đ"): "D",
     ord("ß"): "ss",
 }
 
@@ -91,16 +110,16 @@ PATH_COMPONENT_MAX_LENGTH = 180
 # Uses visually similar Unicode lookalikes so folder names stay human-readable.
 # Source of truth: the original absorg.sh sanitise() function.
 SANITISE_MAP: dict[int, str | None] = {
-    ord("/"): "\u2215",   # ∕  DIVISION SLASH
+    ord("/"): "\u2215",  # ∕  DIVISION SLASH
     ord("\\"): "\u2215",  # ∕  DIVISION SLASH (same as /)
-    ord(":"): "\u2236",   # ∶  RATIO
-    ord("*"): "\u2217",   # ∗  ASTERISK OPERATOR
-    ord("?"): None,       #    removed
-    ord('"'): None,       #    removed
-    ord("<"): "\u2039",   # ‹  SINGLE LEFT-POINTING ANGLE QUOTATION MARK
-    ord(">"): "\u203a",   # ›  SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
-    ord("|"): "\u2502",   # │  BOX DRAWINGS LIGHT VERTICAL
-    ord("\t"): " ",       #    tab → space
+    ord(":"): "\u2236",  # ∶  RATIO
+    ord("*"): "\u2217",  # ∗  ASTERISK OPERATOR
+    ord("?"): None,  #    removed
+    ord('"'): None,  #    removed
+    ord("<"): "\u2039",  # ‹  SINGLE LEFT-POINTING ANGLE QUOTATION MARK
+    ord(">"): "\u203a",  # ›  SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+    ord("|"): "\u2502",  # │  BOX DRAWINGS LIGHT VERTICAL
+    ord("\t"): " ",  #    tab → space
 }
 
 # Tag priority chains for metadata resolution.
@@ -108,34 +127,61 @@ SANITISE_MAP: dict[int, str | None] = {
 # Keys are the normalised names used in the flat tags dict produced by load_tags().
 METADATA_TAG_CHAINS: dict[str, list[str]] = {
     "author": [
-        "album_artist", "albumartist", "album artist", "tpe2",
-        "artist", "tpe1",
-        "composer", "tcom",
-        "narrator", "txxx:narrator", "txxx:narrated_by",
-        "sort_artist", "artistsort", "tso2",
+        "album_artist",
+        "albumartist",
+        "album artist",
+        "tpe2",
+        "artist",
+        "tpe1",
+        "composer",
+        "tcom",
+        "narrator",
+        "txxx:narrator",
+        "txxx:narrated_by",
+        "sort_artist",
+        "artistsort",
+        "tso2",
     ],
     "book": [
-        "album", "talb",
-        "work", "\u00a9wrk", "txxx:work",
+        "album",
+        "talb",
+        "work",
+        "\u00a9wrk",
+        "txxx:work",
         "tvshow",
     ],
     "title": ["title", "tit2", "\u00a9nam"],
     "track": ["track", "trck", "trkn"],
     "disc": ["disc", "tpos", "disk", "disknumber"],
     "series": [
-        "txxx:series", "series",
-        "txxx:series_name", "series_name", "txxx:seriesname",
-        "grouping", "tit1",
-        "work", "\u00a9wrk",
+        "txxx:series",
+        "series",
+        "txxx:series_name",
+        "series_name",
+        "txxx:seriesname",
+        "grouping",
+        "tit1",
+        "work",
+        "\u00a9wrk",
     ],
     "series_index": [
-        "txxx:series-part", "txxx:series_part", "txxx:seriespart",
-        "series-part", "series_part", "seriespart",
-        "movementnumber", "\u00a9mvi", "movement",
+        "txxx:series-part",
+        "txxx:series_part",
+        "txxx:seriespart",
+        "series-part",
+        "series_part",
+        "seriespart",
+        "movementnumber",
+        "\u00a9mvi",
+        "movement",
     ],
     "narrator": [
-        "narrator", "txxx:narrator", "txxx:narrated_by", "txxx:narrated_by",
-        "composer", "tcom",
+        "narrator",
+        "txxx:narrator",
+        "txxx:narrated_by",
+        "txxx:narrated_by",
+        "composer",
+        "tcom",
     ],
     "year": ["date", "tdrc", "year", "\u00a9day", "tyer"],
     "subtitle": ["subtitle", "txxx:subtitle", "tit3"],
