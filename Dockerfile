@@ -25,7 +25,7 @@
 #   docker-compose run --rm absorg --move   # apply
 # =============================================================================
 
-FROM python:3.12-alpine
+FROM python:3.14-alpine
 
 # Copy and install the package
 COPY pyproject.toml /app/
